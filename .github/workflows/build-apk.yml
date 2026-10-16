@@ -33,15 +33,23 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      - name: Inject Supabase keys
+      - name: Inject Supabase keys (safe escape)
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            let s = fs.readFileSync('App.js', 'utf8');
-            s = s.replace('PASTE_YOUR_PROJECT_URL_HERE', process.env.SUPABASE_URL);
-            s = s.replace('PASTE_YOUR_ANON_KEY_HERE', process.env.SUPABASE_ANON_KEY);
-            fs.writeFileSync('App.js', s);
+            const s = fs.readFileSync('App.js', 'utf8');
+            const url = process.env.SUPABASE_URL || '';
+            const key = process.env.SUPABASE_ANON_KEY || '';
+            console.log('URL length:', url.length);
+            console.log('Key length:', key.length);
+            if (!url || !key) throw new Error('Secrets are empty!');
+            // JSON.stringify creates a valid JS string literal using double quotes
+            // It survives any special chars: newlines, single/double quotes, slashes
+            let out = s.replace("'PASTE_YOUR_PROJECT_URL_HERE'", JSON.stringify(url));
+            out = out.replace("'PASTE_YOUR_ANON_KEY_HERE'", JSON.stringify(key));
+            if (out === s) throw new Error('Placeholders not found in App.js');
+            fs.writeFileSync('App.js', out);
             console.log('Injected OK');
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
