@@ -1,35 +1,32 @@
 name: Build Pabili APK
+
 on:
+  workflow_dispatch:
   push:
     branches: [main]
-  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: 22
+          cache: 'npm'
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          distribution: temurin
+          java-version: 17
 
-      - name: Cache Gradle
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*') }}
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/package.json') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
 
@@ -38,89 +35,37 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const s = fs.readFileSync('App.js', 'utf8');
             const url = process.env.SUPABASE_URL || '';
             const key = process.env.SUPABASE_ANON_KEY || '';
-            console.log('URL length:', url.length, 'Key length:', key.length);
-            if (!url || !key) throw new Error('Secrets are empty!');
-            let out = s.replace("'PASTE_YOUR_PROJECT_URL_HERE'", JSON.stringify(url));
-            out = out.replace("'PASTE_YOUR_ANON_KEY_HERE'", JSON.stringify(key));
-            if (out === s) throw new Error('Placeholders not found in App.js');
-            fs.writeFileSync('App.js', out);
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+            if (!url || url.includes('PASTE') || !key || key.includes('PASTE')) {
+              throw new Error('Secrets SUPABASE_URL or SUPABASE_ANON_KEY missing or still PASTE!');
+            }
+            let app = fs.readFileSync('App.js', 'utf8');
+            app = app
+              .replace(/'PASTE_YOUR_PROJECT_URL_HERE'/g, JSON.stringify(url))
+              .replace(/'PASTE_YOUR_ANON_KEY_HERE'/g, JSON.stringify(key));
+            fs.writeFileSync('App.js', app);
+            core.info('✅ Supabase keys injected into App.js');
 
-      - name: Install dependencies
+      - name: Install npm packages
         run: npm install --legacy-peer-deps
 
-      - name: Create index.js entry (registers 'main' + URL fix)
-        run: |
-          cat > index.js << 'EOF'
-          // Make URL.protocol writable on the instance to avoid RN's read-only getter
-          try {
-            const Desc = Object.getOwnPropertyDescriptor(URL.prototype, 'protocol');
-            if (Desc && !Desc.set) {
-              Object.defineProperty(URL.prototype, 'protocol', {
-                get: Desc.get,
-                set: function(v) {
-                  Object.defineProperty(this, 'protocol', { value: v, writable: true, configurable: true });
-                },
-                configurable: true,
-              });
-            }
-          } catch (e) {}
+      - name: Add polyfill + buffer
+        run: npm install --save react-native-url-polyfill@2.0.0 buffer@6.0.3 --legacy-peer-deps
 
-          import { registerRootComponent } from 'expo';
-          import App from './App';
-          registerRootComponent(App);
-          EOF
-
-      - name: Set app.json main = index.js
-        run: |
-          node -e "
-            const fs = require('fs');
-            const c = JSON.parse(fs.readFileSync('app.json', 'utf8'));
-            c.expo.main = 'index.js';
-            fs.writeFileSync('app.json', JSON.stringify(c, null, 2));
-            console.log('main =', c.expo.main);
-          "
-
-      - name: Patch app.json to remove asset requirements
-        run: |
-          node -e "
-            const fs = require('fs');
-            const cfg = JSON.parse(fs.readFileSync('app.json', 'utf8'));
-            if (cfg.expo) {
-              delete cfg.expo.icon;
-              if (cfg.expo.splash) delete cfg.expo.splash.image;
-              if (cfg.expo.android && cfg.expo.android.adaptiveIcon) {
-                delete cfg.expo.android.adaptiveIcon.foregroundImage;
-                delete cfg.expo.android.adaptiveIcon.monochromeImage;
-              }
-              if (cfg.expo.notification) delete cfg.expo.notification.icon;
-            }
-            fs.writeFileSync('app.json', JSON.stringify(cfg, null, 2));
-          "
-
-      - name: Prebuild Android
+      - name: Prebuild Android project
         run: npx expo prebuild --platform android --clean
 
-      - name: Bundle JS into the APK
-        run: |
-          mkdir -p android/app/src/main/assets
-          npx expo export:embed --entry-file index.js --platform android --dev false \
-            --bundle-output android/app/src/main/assets/index.android.bundle \
-            --assets-dest android/app/src/main/res
+      - name: Bundle JS into APK
+        run: npx expo export:embed --entry-file index.js --platform android --dev false --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res
 
-      - name: Build APK
-        run: |
-          cd android
-          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
-          ./gradlew assembleDebug --no-daemon
+      - name: Build APK with Gradle
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
 
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: pabili-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
