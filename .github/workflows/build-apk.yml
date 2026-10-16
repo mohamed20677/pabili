@@ -50,6 +50,11 @@ jobs:
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
+      - name: Create placeholder assets
+        run: |
+          mkdir -p assets
+          node -e "const fs=require('fs');const b=Buffer.from('89504E470D0A1A0A0000000D49484452000000010000000108060000001F15C4890000000D49444154789C630001000000050001A5F645400000000049454E44AE426082','hex');for(const f of ['icon.png','adaptive-icon.png','splash.png','favicon.png','notification-icon.png'])fs.writeFileSync('assets/'+f,b);"
+
       - name: Prebuild Android
         run: npx expo prebuild --platform android --clean
 
