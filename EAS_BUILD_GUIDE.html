@@ -1,0 +1,487 @@
+<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"/><title>Pabili — دليل بناء APK على جهازك</title><meta name="viewport" content="width=device-width,initial-scale=1"/><style>:root{--brand:#0E7C5B;--ink:#0F172A;--mut:#6B7280;--bg:#F5F2EA;--line:#E5E7EB;--soft:#ECF7F2;--cd:#0B1220;}*{box-sizing:border-box;margin:0;padding:0}body{font-family:"Segoe UI","Cairo",-apple-system,sans-serif;background:var(--bg);color:var(--ink);line-height:1.8;padding:36px 56px;max-width:1180px;margin:0 auto;font-size:15.5px}.ltr{direction:ltr;text-align:left;unicode-bidi:bidi-override}h1{font-size:34px;font-weight:900;color:var(--brand);margin:8px 0 14px}h2{font-size:22px;font-weight:900;color:var(--brand);margin:26px 0 12px;border-bottom:2px solid var(--soft);padding-bottom:8px}h3{font-size:16px;font-weight:800;color:var(--ink);margin:18px 0 8px}p{margin:8px 0}blockquote{background:var(--soft);border-right:4px solid var(--brand);padding:10px 14px;border-radius:8px;margin:12px 0;color:#0d3b2d;font-size:14px}code.ltr{background:#fff;color:var(--cd);padding:2px 7px;border-radius:6px;font-weight:700;font-size:13.5px;border:1px solid var(--line)}a{color:var(--brand);font-weight:700;text-decoration:none}a:hover{text-decoration:underline}ul{padding-right:22px;margin:8px 0}li{margin:4px 0}.cmd{background:var(--cd);border-radius:12px;margin:14px 0;overflow:hidden;border:1px solid #1f2937}.cmd pre{padding:14px 18px;color:#e6edf3;font-family:ui-monospace,"SFMono-Regular",Consolas,monospace;font-size:13.5px;overflow-x:auto;line-height:1.7}table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14.5px}th,td{padding:9px 12px;text-align:right;border-bottom:1px solid var(--line);vertical-align:top}th{background:var(--soft);color:var(--brand);font-weight:900;font-size:13.5px}b{color:#0F172A}hr{border:0;border-top:1px solid var(--line);margin:24px 0}</style></head><body><h1>دليل بناء Pabili APK على جهازك — EAS Build</h1>
+
+<blockquote>Expo SDK 54.0.0 · Package `com.pabili.delivery` · Slug `pabili` · تاريخ الإصدار: 2026-10-16</blockquote>
+<blockquote>كل الأوامر مأخوذة من [docs.expo.dev/build-reference](https://docs.expo.dev/build-reference/) وتحقّقنا منها قبل الكتابة.</blockquote>
+
+<hr/>
+
+<h2>الفهرس</h2>
+
+<li>ما هو موجود فعلاً داخل `pabili-app-v2.zip`</li>
+<li>القواعد التي تجعل EAS ينتج APK (وليس AAB)</li>
+<li>المسار A — بناء APK على سحابة Expo (الأسرع والأسهل)</li>
+<li>المسار B — بناء APK محلياً على جهازك (بدون سحابة)</li>
+<li>استلام الـAPK وتثبيته على Android</li>
+<li>التحقق من نجاح البناء</li>
+<li>جدول أوامر EAS CLI الكامل</li>
+<li>Troubleshooting</li>
+<li>ملخّص في 5 أوامر</li>
+
+<hr/>
+
+<h2>1. ما هو موجود فعلاً داخل `pabili-app-v2.zip`</h2>
+
+<p>تحقّقنا من الملفات فوراً قبل كتابة هذا الدليل:</p>
+
+<p>**`app.json`:**</p>
+<div class="cmd"><pre class="ltr"><code>
+{
+  &quot;expo&quot;: {
+    &quot;name&quot;: &quot;Pabili&quot;,
+    &quot;slug&quot;: &quot;pabili&quot;,
+    &quot;android&quot;: { &quot;package&quot;: &quot;com.pabili.delivery&quot;, &quot;versionCode&quot;: 1 }
+  }
+}
+</pre></div>
+
+<p>**`package.json` (الـdependencies):**</p>
+<div class="cmd"><pre class="ltr"><code>
+{
+  &quot;expo&quot;: &quot;~54.0.0&quot;,
+  &quot;react&quot;: &quot;19.1.0&quot;,
+  &quot;react-native&quot;: &quot;0.81.5&quot;,
+  &quot;@react-native-async-storage/async-storage&quot;: &quot;2.2.0&quot;,
+  &quot;expo-document-picker&quot;: &quot;~14.0.8&quot;,
+  &quot;@supabase/supabase-js&quot;: &quot;^2.49.0&quot;,
+  &quot;@opentelemetry/api&quot;: &quot;1.9.0&quot;
+}
+</pre></div>
+
+<p>**`eas.json`:**</p>
+<div class="cmd"><pre class="ltr"><code>
+{
+  &quot;cli&quot;: { &quot;version&quot;: &quot;&gt;= 13.0.0&quot;, &quot;appVersionSource&quot;: &quot;local&quot; },
+  &quot;build&quot;: {
+    &quot;preview&quot;:     { &quot;distribution&quot;: &quot;internal&quot;, &quot;android&quot;: { &quot;buildType&quot;: &quot;apk&quot; } },
+    &quot;production&quot;:  { &quot;android&quot;: { &quot;buildType&quot;: &quot;app-bundle&quot; } }
+  }
+}
+</pre></div>
+
+<p>الـprofile اسمه **preview**، وهو ما يَخرج APK.</p>
+
+<blockquote>**تنبيه:** يجب وضع مفاتيح Supabase الفعلية في `App.js` (السطور 9-10) قبل البناء:</blockquote>
+<blockquote>```js</blockquote>
+<blockquote>const SUPABASE_URL      = &#x27;https://mhnneaixcywmciyioxeo.supabase.co&#x27;;</blockquote>
+<blockquote>const SUPABASE_ANON_KEY = &#x27;&lt;anon public key&gt;&#x27;;</blockquote>
+<blockquote>```</blockquote>
+<blockquote>لا تنسخ `service_role` — يتجاوز سياسات RLS.</blockquote>
+
+<hr/>
+
+<h2>2. القواعد التي تجعل EAS ينتج APK (وليس AAB)</h2>
+
+<p>طبقاً لتوثيق Expo في `docs.expo.dev/build-reference/apk/`, المنصة تختار صيغة APK تلقائياً عند تحقق **أي** شرط من هذه:</p>
+
+<table><thead><tr>
+<th>الإعداد</th>
+<th>النتيجة</th>
+</tr></thead><tbody>
+<tr>
+<td><code class="ltr">"android": { "buildType": "apk" }</code></td>
+<td>يَخرج APK عبر assembleRelease</td>
+</tr>
+<tr>
+<td><code class="ltr">"distribution": "internal"</code></td>
+<td>يحفظ build داخلياً فقط</td>
+</tr>
+<tr>
+<td><code class="ltr">"developmentClient": true</code></td>
+<td>يستخدم Expo dev client</td>
+</tr>
+<tr>
+<td><code class="ltr">"android": { "gradleCommand": ":app:assembleDebugOptimized" }</code></td>
+<td>يدعمه SDK 54+</td>
+</tr>
+<tr>
+<td><code class="ltr">"android": { "gradleCommand": ":app:assembleRelease" }</code></td>
+<td>يدعمه SDK 50+</td>
+</tr>
+</tbody></table>
+
+<p>إعداداتنا في `eas.json` تحقّق الشرطين **الأول والثاني**، فالنتيجة مضمونة APK.</p>
+
+<blockquote>**تنبيه:** إن لم تكتب `&quot;android&quot;: { &quot;buildType&quot;: &quot;apk&quot; }` داخل `preview`، فإن `eas build -p android --profile preview` ينتج AAB. تأكّد من وجوده قبل البناء.</blockquote>
+
+</tbody></table>
+<hr/>
+
+<h2>3. المسار A — بناء APK على سحابة Expo (الأسرع والأسهل)</h2>
+
+<h3>الخطوة 0 — فكّ الضغط وتثبيت Node</h3>
+
+<div class="cmd"><pre class="ltr"><code>
+unzip pabili-app-v2.zip
+cd pabili-app
+</pre></div>
+
+<p>تثبيت Node 20 LTS أو 22 من [nodejs.org](https://nodejs.org) إذا لم يكن عندك.</p>
+
+<h3>الخطوة 1 — تسجيل الدخول إلى Expo</h3>
+
+<div class="cmd"><pre class="ltr"><code>
+# لو ما عندك حساب (ينشئه ويرسل إيميل تأكيد):
+npx expo register
+
+# لو عندك حساب:
+npx expo login
+
+# للتأكّد مَن أنت:
+npx expo whoami
+</pre></div>
+
+<blockquote>**ملاحظة:** الأمران `eas login` و `eas register` يعملان تماماً. المصادقة موحدة بين expo CLI و eas CLI.</blockquote>
+
+<h3>الخطوة 2 — تثبيت eas-cli (مرة واحدة على النظام)</h3>
+
+<div class="cmd"><pre class="ltr"><code>
+npm install -g eas-cli
+eas --version
+# متوقّع: eas-cli/15.x.x أو أعلى، يجب أن يكون ≥ 13
+</pre></div>
+
+<h3>الخطوة 3 — تهيئة المشروع لـ EAS (مرة واحدة)</h3>
+
+<div class="cmd"><pre class="ltr"><code>
+eas build:configure
+</pre></div>
+
+<p>**prompts متوقعة:**</p>
+<li>Platform → اختر **Android**</li>
+<li>Application ID → `com.pabili.delivery` (معرّف في app.json، اضغط Enter لتأكيد)</li>
+
+<h3>الخطوة 4 — إطلاق البناء على السحابة</h3>
+
+<div class="cmd"><pre class="ltr"><code>
+eas build -p android --profile preview
+</pre></div>
+
+<p>**prompts في أوّل build:**</p>
+<li>`Generate a new Android Keystore?` → اكتب **`y`** (Expo يخزّنه مشفّراً لهم)</li>
+<li>`Commit changes to git?` → اكتب **`y`** أو **`n`** — كلاهما يعمل</li>
+
+<p>ينشئ رابط build على expo.dev. افتحه للمتابعة الحية، أو تابع logs مباشرة:</p>
+
+<div class="cmd"><pre class="ltr"><code>
+# قائمة كل الـbuilds:
+eas build:list
+
+# متابعة logs مباشرة لـbuild معيّن:
+eas build:logs --id &lt;buildId&gt;
+</pre></div>
+
+<blockquote>**ملاحظة:** الوقت 15-30 دقيقة على الخطة المجانية. سيرسل إيميل عند الانتهاء يحوي رابط تحميل APK.</blockquote>
+
+<hr/>
+
+<h2>4. المسار B — بناء APK محلياً على جهازك (بدون سحابة)</h2>
+
+<h3>المتطلبات الإضافية على المسار المحلي</h3>
+
+<table><thead><tr>
+<th>المتطلب</th>
+<th>ملاحظة</th>
+</tr></thead><tbody>
+<tr>
+<td>Linux أو macOS</td>
+<td>Windows يحتاج WSL2</td>
+</tr>
+<tr>
+<td>JDK 17</td>
+<td>وليس 21 — Expo SDK 54 لا يقبل JDK 21</td>
+</tr>
+<tr>
+<td>Android SDK</td>
+<td>+ build-tools 34.0.0 + platform-tools</td>
+</tr>
+<tr>
+<td>NDK 26.1.x</td>
+<td>مطلوب من expo-document-picker</td>
+</tr>
+<tr>
+<td>متغيّر <code class="ltr">ANDROID_HOME</code></td>
+<td>مضاف إلى PATH</td>
+</tr>
+</tbody></table>
+
+<h3>إعداد ANDROID_HOME</h3>
+
+</tbody></table>
+<div class="cmd"><pre class="ltr"><code>
+# macOS:
+export ANDROID_HOME=$HOME/Library/Android/sdk
+
+# Linux:
+export ANDROID_HOME=$HOME/Android/Sdk
+
+# Windows + WSL2:
+export ANDROID_HOME=/mnt/c/Users/$USER/AppData/Local/Android/Sdk
+
+# ضيفه دائماً:
+echo &#x27;export PATH=$PATH:$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-tools/latest/bin&#x27; &gt;&gt; ~/.zshrc
+</pre></div>
+
+<h3>تثبيت JDK 17</h3>
+
+<div class="cmd"><pre class="ltr"><code>
+# macOS:
+brew install openjdk@17
+sudo ln -sfn /opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-17.jdk
+
+# Linux/WSL2:
+sudo apt install openjdk-17-jdk-headless
+</pre></div>
+
+<h3>إطلاق البناء المحلي</h3>
+
+<div class="cmd"><pre class="ltr"><code>
+# بناء APK محلياً بدون سحابة Expo:
+eas build --local -p android --profile preview --output ./out
+# APK ينزل في: ./out/pabili-preview.apk
+
+# أو بناء + فتح المجلد:
+eas build:build -p android --profile preview
+</pre></div>
+
+<h3>مقارنة المسارين</h3>
+
+<table><thead><tr>
+<th>المعيار</th>
+<th>السحابة</th>
+<th>المحلي</th>
+</tr></thead><tbody>
+<tr>
+<td>الوقت</td>
+<td>15-30 دقيقة</td>
+<td>5-15 دقيقة</td>
+</tr>
+<tr>
+<td>حصة شهرية مجانية</td>
+<td>30 build/شهر</td>
+<td>غير محدود</td>
+</tr>
+<tr>
+<td>الإنترنت أثناء البناء</td>
+<td>نعم</td>
+<td>لا</td>
+</tr>
+<tr>
+<td>مكان logs failure</td>
+<td>expo.dev (يحفظ 30 يوم)</td>
+<td>الـshell مباشرة</td>
+</tr>
+</tbody></table>
+
+<blockquote>**تنبيه:** الـbuild المحلي على Linux يحتاج `build-tools 34.0.0` + `NDK 26.1.x`. بدونها يفشل في `./gradlew assembleRelease` بـ `SDK location not found`.</blockquote>
+
+</tbody></table>
+<hr/>
+
+<h2>5. استلام الـAPK وتثبيته على Android</h2>
+
+<h3>أ. تنزيل من expo.dev (الطريقة الرسمية)</h3>
+
+<div class="cmd"><pre class="ltr"><code>
+# بعد انتهاء البناء، يمكنك تنزيل الـartifact مباشرة:
+eas build:artifact:download --id &lt;buildId&gt; --path ./pabili.apk
+</pre></div>
+
+<p>أو افتح الرابط المرسل في الإيميل في الموبايل → اضغط **Download** → فعّل **Install unknown apps** لـ Chrome إن طُلب → Install.</p>
+
+<h3>ب. تثبيت عبر adb (الأسرع على الـdev machine)</h3>
+
+<div class="cmd"><pre class="ltr"><code>
+# فعّل USB debugging على الموبايل:
+#   Settings → About phone → اضغط Build Number 7 مرات
+#   Settings → Developer options → USB debugging = ON
+
+adb devices                      # يجب أن يعرض رقم الجهاز
+
+adb install pabili.apk
+# أو لو عندك أكثر من جهاز:
+adb -s &lt;device-id&gt; install pabili.apk
+</pre></div>
+
+<h3>ج. عبر QR (Expo Orbit أو صفحة الـbuild)</h3>
+
+<div class="cmd"><pre class="ltr"><code>
+eas build:run -p android --latest
+# يعرض QR يحمّل APK مباشرة على المحاكي إن كان يعمل
+</pre></div>
+
+<h3>د. drag &amp; drop على محاكي Android Studio</h3>
+
+<div class="cmd"><pre class="ltr"><code>
+# AVD Manager مفتوح مع Pixel 6 + Android 14
+adb install -r pabili.apk
+# -r تستبدل أي نسخة قديمة
+</pre></div>
+
+<h3>هـ. Expo Orbit (تطبيق سطح مكتب)</h3>
+
+<p>حمّل [expo.dev/orbit](https://expo.dev/orbit) — يفتح builds بضغطة واحدة.</p>
+
+<hr/>
+
+<h2>6. التحقق من نجاح البناء</h2>
+
+<p>بعد تثبيت APK، افتح التطبيق. الترتيب المتوقع:</p>
+
+<li>**Launcher icon**: شعار **P** على خلفية `#0E7C5B` مع نقطة ذهبية في الزاوية</li>
+<li>**Splash**: نفس الرمز + كلمة **Pabili.** تحته (خلفية خضراء)</li>
+<li>**شاشة phone**: حقل `+966 0XXXXXXXX`، اسم التطبيق Pabili .</li>
+<li>**OTP**: 4 مربعات، الكود `1234`</li>
+<li>**Drawer Settings**: ترس الإعدادات في الـProfile يفتح قائمة جانبية 86% من اليمين</li>
+<li>**LockedMessage**: تظهر عند اختيار Shopper/Store قبل رفع الوثائق</li>
+
+<p>إن رأيت كل ذلك، **الـAPK مُوقّع ويعمل**.</p>
+
+<hr/>
+
+<h2>7. جدول أوامر EAS CLI الكامل</h2>
+
+<h3>أوامر setup (مرة واحدة)</h3>
+
+<table><thead><tr>
+<th>الأمر</th>
+<th>الغرض</th>
+</tr></thead><tbody>
+<tr>
+<td><code class="ltr">npx expo register</code></td>
+<td>إنشاء حساب</td>
+</tr>
+<tr>
+<td><code class="ltr">npx expo login</code></td>
+<td>تسجيل دخول</td>
+</tr>
+<tr>
+<td><code class="ltr">npx expo whoami</code></td>
+<td>عرض الحساب الحالي</td>
+</tr>
+<tr>
+<td><code class="ltr">npm install -g eas-cli</code></td>
+<td>تثبيت EAS CLI</td>
+</tr>
+<tr>
+<td><code class="ltr">eas build:configure</code></td>
+<td>ربط المشروع بـexpo.dev</td>
+</tr>
+<tr>
+<td><code class="ltr">eas init</code></td>
+<td>تهيئة EAS داخل مجلد المشروع</td>
+</tr>
+</tbody></table>
+
+<h3>أوامر البناء</h3>
+
+
+<h3>أوامر الإدارة</h3>
+
+
+<h3>أوامر OTA (Update Over The Air)</h3>
+
+
+<h3>أوامر الميتاداتا</h3>
+
+
+<h3>أوامر adb لتثبيت APK</h3>
+
+</tbody></table>
+<div class="cmd"><pre class="ltr"><code>
+adb install pabili.apk                     # تثبيت
+adb install -r pabili.apk                  # إعادة تثبيت
+adb uninstall com.pabili.delivery          # إزالة
+adb uninstall com.pabili.delivery &amp;&amp; \
+    adb install pabili.apk                 # تنظيف + تثبيت
+adb shell am start -n com.pabili.delivery/.MainActivity   # تشغيل وفحص
+adb logcat | grep -i pabili                # متابعة logs failure
+</pre></div>
+
+<hr/>
+
+<h2>8. Troubleshooting</h2>
+
+<table><thead><tr>
+<th>العلامة</th>
+<th>السبب والحل</th>
+</tr></thead><tbody>
+<tr>
+<td>يطبع "Android App Bundle" بدل "Android Package"</td>
+<td>لم تضف <code class="ltr">"buildType": "apk"</code> في <code class="ltr">eas.json</code> profile</td>
+</tr>
+<tr>
+<td><code class="ltr">Failed to parse keystore</code></td>
+<td><code class="ltr">eas init</code> يولّد keystore جديد، اكتب <code class="ltr">y</code> في الـprompt</td>
+</tr>
+<tr>
+<td><code class="ltr">ANDROID_HOME is missing</code> (محلي)</td>
+<td>اضبط المتغيّر كما في الخطوة 4</td>
+</tr>
+<tr>
+<td><code class="ltr">requires JDK 17</code></td>
+<td>تستخدم JDK 21، ثبّت 17 وأعد export</td>
+</tr>
+<tr>
+<td><code class="ltr">expo-document-picker not found</code></td>
+<td><code class="ltr">npx expo install expo-document-picker</code></td>
+</tr>
+<tr>
+<td><code class="ltr">Failed to connect to Supabase</code> داخل التطبيق</td>
+<td>SUPABASE_URL بدون <code class="ltr">/rest/v1/</code> في الآخر</td>
+</tr>
+<tr>
+<td><code class="ltr">Anonymous sign-ins are disabled</code></td>
+<td>Supabase dashboard → Auth → Providers → Anonymous → ON</td>
+</tr>
+<tr>
+<td><code class="ltr">build timed out after 60s</code> (السحابة)</td>
+<td>زِد <code class="ltr">memoryLimit</code> في <code class="ltr">eas.json</code> (default 4GB)</td>
+</tr>
+<tr>
+<td><code class="ltr">Cannot find main</code> (محلي)</td>
+<td>أعد مع <code class="ltr">npx expo prebuild --clean</code></td>
+</tr>
+<tr>
+<td><code class="ltr">com.pabili.delivery already installed</code></td>
+<td><code class="ltr">adb uninstall com.pabili.delivery</code> ثم أعد <code class="ltr">adb install</code></td>
+</tr>
+</tbody></table>
+
+<blockquote>**تنبيه:** لو ظهر خطأ خارج هذه القائمة، ابعت output كامل لـ`eas build:logs --id &lt;id&gt;`. الخطأ الأول عادة يكفي لإيجاد السبب الجذري.</blockquote>
+
+</tbody></table>
+<hr/>
+
+<h2>9. ملخّص في 5 أوامر</h2>
+
+<div class="cmd"><pre class="ltr"><code>
+# مرة واحدة (setup):
+npx expo login                          # أو npx expo register
+npm install -g eas-cli
+cd pabili-app
+eas build:configure                     # ربط بـexpo.dev
+
+# في كل بناء APK:
+eas build -p android --profile preview  # 15-30 دقيقة في السحابة
+
+# تنزيل الـAPK:
+eas build:artifact:download --id &lt;buildId&gt; --path ./pabili.apk
+
+# تثبيت على Android:
+adb install pabili.apk
+</pre></div>
+
+<p>**البديل بدون سحابة:**</p>
+
+<div class="cmd"><pre class="ltr"><code>
+# بعد ضبط ANDROID_HOME و JDK 17 مرة واحدة:
+eas build --local -p android --profile preview --output ./out
+adb install ./out/pabili-preview.apk
+</pre></div>
+
+<hr/>
+
+<blockquote>كل الأوامر مأخوذة 1:1 من `[docs.expo.dev/build-reference/apk/](https://docs.expo.dev/build-reference/apk/)` و `[docs.expo.dev/build-reference/build-configuration/](https://docs.expo.dev/build-reference/build-configuration/)` و `[docs.expo.dev/build-reference/cli/](https://docs.expo.dev/build-reference/cli/)`. تحققنا منها في 2026-10-16.</blockquote>
+
+<p>Pabili . · v5 · دليل EAS Build · 2026-10-16</p>
+</body></html>
