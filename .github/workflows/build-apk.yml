@@ -27,7 +27,21 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      - name: Inject Supabase keys into App.js
+      - name: Strip asset refs from app.json
+        run: |
+          node -e '
+            const fs = require("fs");
+            const a = JSON.parse(fs.readFileSync("app.json", "utf8"));
+            delete a.expo.icon;
+            delete a.expo.splash;
+            delete a.expo.notification;
+            if (a.expo.android) delete a.expo.android.adaptiveIcon;
+            if (a.expo.web) delete a.expo.web.favicon;
+            fs.writeFileSync("app.json", JSON.stringify(a, null, 2));
+            console.log("✅ Asset refs removed");
+          '
+
+      - name: Inject Supabase keys
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
@@ -36,17 +50,15 @@ jobs:
             const fs = require("fs");
             const url = process.env.SUPABASE_URL;
             const key = process.env.SUPABASE_ANON_KEY;
-            console.log("URL length:", url ? url.length : 0);
-            console.log("KEY length:", key ? key.length : 0);
             if (!url || url.includes("PASTE") || !key || key.includes("PASTE")) {
-              throw new Error("Secrets فاضية أو فيها PASTE — راجع Settings → Secrets");
+              throw new Error("Secrets فاضية");
             }
             let app = fs.readFileSync("App.js", "utf8");
             app = app
               .replace(/'\''PASTE_YOUR_PROJECT_URL_HERE'\''/g, JSON.stringify(url))
               .replace(/'\''PASTE_YOUR_ANON_KEY_HERE'\''/g, JSON.stringify(key));
             fs.writeFileSync("App.js", app);
-            console.log("✅ Keys اتحقنت في App.js");
+            console.log("✅ Keys injected");
           '
 
       - name: Install packages
@@ -58,16 +70,16 @@ jobs:
       - name: Prebuild Android
         run: npx expo prebuild --platform android --clean
 
-      - name: Bundle JS into APK
+      - name: Bundle JS
         run: npx expo export:embed --entry-file index.js --platform android --dev false --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res
 
-      - name: Build APK with Gradle
+      - name: Build APK
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
 
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: pabili-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+        path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
