@@ -14,7 +14,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Workflow version check
-        run: echo "=== BUILD-WORKFLOW VERSION 9 === If your log does NOT show VERSION 9, you clicked Re-run on an OLD failed run — GitHub re-executes the OLD definition. Always use the green 'Run workflow' button (fresh run of main) ==="
+        run: echo "=== BUILD-WORKFLOW VERSION 10 === If your log does NOT show VERSION 10, you clicked Re-run on an OLD failed run — GitHub re-executes the OLD definition. Always use the green 'Run workflow' button (fresh run of main) ==="
 
       - uses: actions/checkout@v4
 
@@ -31,17 +31,16 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Cache Gradle
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/gradle/wrapper/gradle-wrapper.properties', '**/*.gradle', '**/*.gradle.kts') }}
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/package.json') }}
           restore-keys: |
-            gradle-${{ runner.os }}-
+            ${{ runner.os }}-gradle-
 
-      - name: Validate Supabase secrets
+      - name: Validate Secrets
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
@@ -49,129 +48,148 @@ jobs:
           echo "URL length: ${#SUPABASE_URL}"
           echo "KEY length: ${#SUPABASE_ANON_KEY}"
           if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
-            echo "::error::Secrets SUPABASE_URL or SUPABASE_ANON_KEY are empty. Add them at Settings → Secrets and variables → Actions."
+            echo "ERROR: Secrets SUPABASE_URL or SUPABASE_ANON_KEY are empty"
             exit 1
           fi
-          if [[ "$SUPABASE_URL" != https://* ]]; then
-            echo "::error::SUPABASE_URL must start with https://"
-            exit 1
-          fi
-          if [[ "$SUPABASE_ANON_KEY" != eyJ* ]]; then
-            echo "::error::SUPABASE_ANON_KEY must start with eyJ"
-            exit 1
-          fi
+          case "$SUPABASE_URL" in
+            *PASTE*) echo "ERROR: SUPABASE_URL still has PASTE"; exit 1 ;;
+            https://*) ;;
+            *) echo "ERROR: must start with https://"; exit 1 ;;
+          esac
+          case "$SUPABASE_ANON_KEY" in
+            *PASTE*) echo "ERROR: SUPABASE_ANON_KEY still has PASTE"; exit 1 ;;
+            eyJ*) ;;
+            *) echo "ERROR: must start with eyJ (JWT)"; exit 1 ;;
+          esac
+          echo "Both secrets validated OK"
 
-      - name: Generate placeholder icons
+      - name: Generate icons if missing
         run: |
-          python3 - <<'PY'
-          from PIL import Image, ImageDraw, ImageFont
-          import os
+          python3 -m pip install --quiet pillow 2>/dev/null \
+            || python3 -m pip install --quiet --break-system-packages pillow 2>/dev/null \
+            || python3 -m pip install --quiet --user pillow 2>/dev/null \
+            || echo "PILLOW_UNAVAILABLE - using pure-python fallback"
+          python3 << 'PYEOF'
+          import os, zlib, struct
+
+          BRAND = (14, 124, 91)  # #0E7C5B
+
+          def chunk(tag, data):
+              return (struct.pack('>I', len(data)) + tag + data
+                      + struct.pack('>I', zlib.crc32(tag + data) & 0xffffffff))
+
+          def write_solid_png(path, w, h, rgba):
+              raw = b''.join(b'\x00' + bytes(rgba) * w for _ in range(h))
+              png = (b'\x89PNG\r\n\x1a\n'
+                     + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 6, 0, 0, 0))
+                     + chunk(b'IDAT', zlib.compress(raw))
+                     + chunk(b'IEND', b''))
+              with open(path, 'wb') as f:
+                  f.write(png)
+
+          try:
+              from PIL import Image, ImageDraw, ImageFont
+              HAS_PIL = True
+          except Exception:
+              HAS_PIL = False
+
+          def load_font(size):
+              for p in ('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+                        '/usr/share/fonts/truetype/freefont/FreeSansBold.ttf'):
+                  try:
+                      return ImageFont.truetype(p, size)
+                  except Exception:
+                      continue
+              return ImageFont.load_default()
+
+          def make_icon(path, size, transparent=False):
+              if not HAS_PIL:
+                  write_solid_png(path, size, size, (0, 0, 0, 0) if transparent else BRAND + (255,))
+                  print('icon generated (fallback solid):', path)
+                  return
+              img = Image.new('RGBA', (size, size), (0, 0, 0, 0) if transparent else BRAND + (255,))
+              d = ImageDraw.Draw(img)
+              d.ellipse([size*0.14, size*0.14, size*0.86, size*0.86], fill=BRAND + (255,))
+              f = load_font(int(size*0.5))
+              try:
+                  d.text((size//2, size//2), 'P', fill='white', anchor='mm', font=f)
+              except Exception:
+                  d.text((int(size*0.32), int(size*0.2)), 'P', fill='white', font=f)
+              img.save(path)
+              print('icon generated:', path)
+
+          def make_splash(path, w, h):
+              if not HAS_PIL:
+                  write_solid_png(path, w, h, BRAND + (255,))
+                  print('splash generated (fallback solid):', path)
+                  return
+              img = Image.new('RGB', (w, h), BRAND)
+              d = ImageDraw.Draw(img)
+              f = load_font(600)
+              try:
+                  d.text((w//2, h//2), 'P', fill='white', anchor='mm', font=f)
+              except Exception:
+                  d.text((int(w*0.42), int(h*0.44)), 'P', fill='white', font=f)
+              img.save(path)
+              print('splash generated:', path)
+
           os.makedirs('assets', exist_ok=True)
-          # icon.png 1024x1024
-          im = Image.new('RGB', (1024, 1024), (14, 124, 91))
-          d = ImageDraw.Draw(im)
-          d.ellipse([250, 250, 774, 774], fill=(242, 181, 49))
-          try:
-            f = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 380)
-          except Exception:
-            f = ImageFont.load_default()
-          d.text((512, 470), 'P', fill='white', font=f, anchor='mm')
-          im.save('assets/icon.png')
-          # adaptive-icon.png 1024x1024 transparent
-          ai = Image.new('RGBA', (1024, 1024), (0, 0, 0, 0))
-          ad = ImageDraw.Draw(ai)
-          ad.ellipse([180, 180, 844, 844], fill=(14, 124, 91, 255))
-          ad.ellipse([280, 280, 744, 744], fill=(242, 181, 49, 255))
-          try:
-            f2 = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 320)
-            ad.text((512, 512), 'P', fill=(255, 255, 255, 255), font=f2, anchor='mm')
-          except Exception:
-            pass
-          ai.save('assets/adaptive-icon.png')
-          # notification-icon.png 96x96 white-on-transparent
-          ni = Image.new('RGBA', (96, 96), (0, 0, 0, 0))
-          nd = ImageDraw.Draw(ni)
-          nd.ellipse([8, 8, 88, 88], fill=(255, 255, 255, 255))
-          try:
-            nf = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 60)
-            nd.text((48, 48), 'P', fill=(14, 124, 91, 255), font=nf, anchor='mm')
-          except Exception:
-            pass
-          ni.save('assets/notification-icon.png')
-          # favicon.png 48x48
-          fv = Image.new('RGB', (48, 48), (14, 124, 91))
-          fd = ImageDraw.Draw(fv)
-          fd.ellipse([4, 4, 44, 44], fill=(242, 181, 49))
-          fv.save('assets/favicon.png')
-          # splash.png 1242x2436
-          sp = Image.new('RGB', (1242, 2436), (14, 124, 91))
-          sd = ImageDraw.Draw(sp)
-          sd.ellipse([421, 968, 821, 1368], fill=(242, 181, 49))
-          try:
-            sf = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 220)
-            sd.text((621, 1168), 'Pabili', fill='white', font=sf, anchor='mm')
-          except Exception:
-            pass
-          sp.save('assets/splash.png')
-          print('ICONS OK')
-          PY
-
-      - name: Clean icon refs from app.json
-        run: |
-          python3 - <<'PY'
-          import json, re, sys
-          p='app.json'
-          with open(p) as f: data=json.load(f)
-          expo=data.get('expo', {})
-          expo.pop('icon', None)
-          expo.pop('splash', None)
-          expo.pop('android', None)
-          expo.pop('ios', None)
-          data['expo']=expo
-          with open(p,'w') as f: json.dump(data, f, indent=2)
-          print('APP.JSON CLEAN OK')
-          PY
-
-      - name: Inject Supabase keys into App.js
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-        run: |
-          if [ ! -f App.js ]; then
-            echo "::error::App.js not found in repo root!"
-            echo "::error::Upload App.js to https://github.com/mohamed20677/pabili/upload/main (select App.js only)."
-            ls -la
-            exit 1
-          fi
-          python3 - <<PY
-          import os, re
-          url = os.environ['SUPABASE_URL']
-          key = os.environ['SUPABASE_ANON_KEY']
-          with open('App.js') as f: s = f.read()
-          if 'PASTE_YOUR' in s:
-            s = re.sub(r"PASTE_YOUR_PROJECT_URL_HERE", url, s)
-            s = re.sub(r"PASTE_YOUR_ANON_KEY_HERE", key, s)
-            with open('App.js','w') as f: f.write(s)
-            print('INJECT OK')
+          _plan = [('assets/icon.png', 1024, False),
+                   ('assets/adaptive-icon.png', 1024, True),
+                   ('assets/notification-icon.png', 96, False),
+                   ('assets/favicon.png', 48, False)]
+          for _p, _s, _t in _plan:
+              if os.path.exists(_p):
+                  print('icon exists, keep repo version:', _p)
+              else:
+                  make_icon(_p, _s, transparent=_t)
+          if os.path.exists('assets/splash.png'):
+              print('splash exists, keep repo version: assets/splash.png')
           else:
-            print('Already injected - skipping')
-          PY
+              make_splash('assets/splash.png', 1242, 2436)
+          print('ALL ICONS READY')
+          PYEOF
 
-      - name: Install dependencies
+      - name: Write .env with Supabase keys
+        env:
+          SB_URL: ${{ secrets.SUPABASE_URL }}
+          SB_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          for i in 1 2 3; do
-            npm install --legacy-peer-deps --no-audit --no-fund && break || sleep 5
-          done
+          node << 'EOF'
+          const fs = require('fs');
+          const url = (process.env.SB_URL || '').trim();
+          const key = (process.env.SB_KEY || '').trim();
+          if (!url.startsWith('https://')) {
+            console.error('ERROR: Secret SUPABASE_URL is missing or does not start with https://');
+            process.exit(1);
+          }
+          if (!key.startsWith('eyJ')) {
+            console.error('ERROR: Secret SUPABASE_ANON_KEY is missing or is not the anon public key (must start with eyJ). NEVER use the service_role key.');
+            process.exit(1);
+          }
+          fs.writeFileSync('.env',
+            'EXPO_PUBLIC_SUPABASE_URL=' + url + '\n' +
+            'EXPO_PUBLIC_SUPABASE_ANON_KEY=' + key + '\n');
+          console.log('.env written OK -> ' + url + ' (anon key length: ' + key.length + ')');
+          EOF
 
-      - name: Build debug APK
-        run: |
-          mkdir -p android/app/src/main/assets
-          npx expo prebuild --platform android --clean --no-install
-          npm install --legacy-peer-deps buffer@6.0.3 react-native-url-polyfill@2.0.0 --no-audit --no-fund
-          npx expo export:embed --platform android --dev false --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res
-          cd android && ./gradlew assembleDebug --no-daemon
+      - name: Install packages
+        run: npm install --legacy-peer-deps --no-audit --no-fund || npm ci --legacy-peer-deps --no-audit --no-fund
 
-      - name: Upload APK
+      - name: Add polyfill + buffer
+        run: npm install --save --legacy-peer-deps react-native-url-polyfill@2.0.0 buffer@6.0.3 || echo "polyfill install skipped"
+
+      - name: Prebuild Android
+        run: npx expo prebuild --platform android --clean
+
+      - name: Bundle JS into APK
+        run: npx expo export:embed --entry-file index.js --platform android --dev false --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res
+
+      - name: Build APK with Gradle
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: pabili-debug-apk
