@@ -41,19 +41,17 @@ jobs:
           echo "KEY length: ${#SUPABASE_ANON_KEY}"
           if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
             echo "ERROR: Secrets SUPABASE_URL or SUPABASE_ANON_KEY are empty"
-            echo "FIX: Go to https://github.com/${{ github.repository }}/settings/secrets/actions"
-            echo "FIX: Make sure both secrets exist with non-empty values"
             exit 1
           fi
           case "$SUPABASE_URL" in
-            *PASTE*) echo "ERROR: SUPABASE_URL still has PASTE placeholder"; exit 1 ;;
+            *PASTE*) echo "ERROR: SUPABASE_URL still has PASTE"; exit 1 ;;
             https://*) ;;
-            *) echo "ERROR: SUPABASE_URL must start with https://"; exit 1 ;;
+            *) echo "ERROR: must start with https://"; exit 1 ;;
           esac
           case "$SUPABASE_ANON_KEY" in
-            *PASTE*) echo "ERROR: SUPABASE_ANON_KEY still has PASTE placeholder"; exit 1 ;;
+            *PASTE*) echo "ERROR: SUPABASE_ANON_KEY still has PASTE"; exit 1 ;;
             eyJ*) ;;
-            *) echo "ERROR: SUPABASE_ANON_KEY must start with eyJ (JWT)"; exit 1 ;;
+            *) echo "ERROR: must start with eyJ (JWT)"; exit 1 ;;
           esac
           echo "Both secrets validated OK"
 
@@ -64,7 +62,6 @@ jobs:
           python3 << 'PYEOF'
           from PIL import Image, ImageDraw, ImageFont
           import os
-
           def make_icon(path, size, bg='#0E7C5B', fg='white'):
               img = Image.new('RGBA', (size, size), bg)
               d = ImageDraw.Draw(img)
@@ -75,8 +72,6 @@ jobs:
                   font = ImageFont.load_default()
               d.text((size//2, size//2), 'P', fill=bg, anchor='mm', font=font)
               img.save(path)
-              print('OK ' + path + ' (' + str(size) + 'x' + str(size) + ')')
-
           if not os.path.exists('assets/icon.png'):
               make_icon('assets/icon.png', 1024)
           if not os.path.exists('assets/adaptive-icon.png'):
@@ -89,8 +84,7 @@ jobs:
               except Exception:
                   font = ImageFont.load_default()
               d.text((621, 1218), 'P', fill='white', anchor='mm', font=font)
-              img.save('assets/splash.png')
-              print('OK assets/splash.png')
+              img.save('/home/user/pabili-app/assets/splash.png')
           if not os.path.exists('assets/notification-icon.png'):
               make_icon('assets/notification-icon.png', 96)
           if not os.path.exists('assets/favicon.png'):
@@ -99,32 +93,36 @@ jobs:
 
       - name: Strip icon refs from app.json
         run: |
-          node -e '
-            const fs = require("fs");
-            const a = JSON.parse(fs.readFileSync("app.json", "utf8"));
-            delete a.expo.icon;
-            delete a.expo.splash;
-            delete a.expo.notification;
-            if (a.expo.android) { delete a.expo.android.adaptiveIcon; }
-            if (a.expo.web) { delete a.expo.web.favicon; }
-            fs.writeFileSync("app.json", JSON.stringify(a, null, 2));
-            console.log("Asset refs removed from app.json");
-          '
+          node -e 'const fs=require("fs");const a=JSON.parse(fs.readFileSync("app.json","utf8"));delete a.expo.icon;delete a.expo.splash;delete a.expo.notification;if(a.expo.android)delete a.expo.android.adaptiveIcon;if(a.expo.web)delete a.expo.web.favicon;fs.writeFileSync("app.json",JSON.stringify(a,null,2));'
 
       - name: Inject Supabase keys into App.js
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SB_URL: ${{ secrets.SUPABASE_URL }}
+          SB_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          node -e '
-            const fs = require("fs");
-            let app = fs.readFileSync("App.js", "utf8");
-            app = app
-              .replace(/'\''PASTE_YOUR_PROJECT_URL_HERE'\''/g, JSON.stringify(process.env.SUPABASE_URL))
-              .replace(/'\''PASTE_YOUR_ANON_KEY_HERE'\''/g, JSON.stringify(process.env.SUPABASE_ANON_KEY));
-            fs.writeFileSync("App.js", app);
-            console.log("Supabase keys injected into App.js");
-          '
+          node << 'EOF'
+          const fs = require('fs');
+          const url = (process.env.SB_URL || '').trim();
+          const key = (process.env.SB_KEY || '').trim();
+          if (!url.startsWith('https://')) {
+            console.error('ERROR: Secret SUPABASE_URL is missing or does not start with https://');
+            process.exit(1);
+          }
+          if (!key.startsWith('eyJ')) {
+            console.error('ERROR: Secret SUPABASE_ANON_KEY is missing or is not the anon public key (must start with eyJ). NEVER use the service_role key.');
+            process.exit(1);
+          }
+          let app = fs.readFileSync('App.js', 'utf8');
+          const before = app;
+          app = app.split("'PASTE_YOUR_PROJECT_URL_HERE'").join(JSON.stringify(url));
+          app = app.split("'PASTE_YOUR_ANON_KEY_HERE'").join(JSON.stringify(key));
+          if (app === before) {
+            console.error('ERROR: Placeholders not found in App.js — repo App.js is wrong or already injected.');
+            process.exit(1);
+          }
+          fs.writeFileSync('App.js', app);
+          console.log('Supabase keys injected OK -> ' + url + ' (anon key length: ' + key.length + ')');
+          EOF
 
       - name: Install packages
         run: npm install --legacy-peer-deps --no-audit --no-fund || npm ci --legacy-peer-deps --no-audit --no-fund
