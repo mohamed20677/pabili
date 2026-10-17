@@ -57,43 +57,82 @@ jobs:
 
       - name: Generate icons if missing
         run: |
-          mkdir -p assets
-          pip install --quiet pillow
+          python3 -m pip install --quiet pillow 2>/dev/null \
+            || python3 -m pip install --quiet --break-system-packages pillow 2>/dev/null \
+            || python3 -m pip install --quiet --user pillow 2>/dev/null \
+            || echo "PILLOW_UNAVAILABLE - using pure-python fallback"
           python3 << 'PYEOF'
-          from PIL import Image, ImageDraw, ImageFont
-          import os
-          def make_icon(path, size, bg='#0E7C5B', fg='white'):
-              img = Image.new('RGBA', (size, size), bg)
-              d = ImageDraw.Draw(img)
-              d.ellipse([size*0.22, size*0.22, size*0.78, size*0.78], fill=fg)
-              try:
-                  font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', int(size*0.45))
-              except Exception:
-                  font = ImageFont.load_default()
-              d.text((size//2, size//2), 'P', fill=bg, anchor='mm', font=font)
-              img.save(path)
-          if not os.path.exists('assets/icon.png'):
-              make_icon('assets/icon.png', 1024)
-          if not os.path.exists('assets/adaptive-icon.png'):
-              make_icon('assets/adaptive-icon.png', 1024)
-          if not os.path.exists('assets/splash.png'):
-              img = Image.new('RGB', (1242, 2436), '#0E7C5B')
-              d = ImageDraw.Draw(img)
-              try:
-                  font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 600)
-              except Exception:
-                  font = ImageFont.load_default()
-              d.text((621, 1218), 'P', fill='white', anchor='mm', font=font)
-              img.save('/home/user/pabili-app/assets/splash.png')
-          if not os.path.exists('assets/notification-icon.png'):
-              make_icon('assets/notification-icon.png', 96)
-          if not os.path.exists('assets/favicon.png'):
-              make_icon('assets/favicon.png', 48)
-          PYEOF
+          import os, zlib, struct
 
-      - name: Strip icon refs from app.json
-        run: |
-          node -e 'const fs=require("fs");const a=JSON.parse(fs.readFileSync("app.json","utf8"));delete a.expo.icon;delete a.expo.splash;delete a.expo.notification;if(a.expo.android)delete a.expo.android.adaptiveIcon;if(a.expo.web)delete a.expo.web.favicon;fs.writeFileSync("app.json",JSON.stringify(a,null,2));'
+          BRAND = (14, 124, 91)  # #0E7C5B
+
+          def chunk(tag, data):
+              return (struct.pack('>I', len(data)) + tag + data
+                      + struct.pack('>I', zlib.crc32(tag + data) & 0xffffffff))
+
+          def write_solid_png(path, w, h, rgba):
+              raw = b''.join(b'\x00' + bytes(rgba) * w for _ in range(h))
+              png = (b'\x89PNG\r\n\x1a\n'
+                     + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 6, 0, 0, 0))
+                     + chunk(b'IDAT', zlib.compress(raw))
+                     + chunk(b'IEND', b''))
+              with open(path, 'wb') as f:
+                  f.write(png)
+
+          try:
+              from PIL import Image, ImageDraw, ImageFont
+              HAS_PIL = True
+          except Exception:
+              HAS_PIL = False
+
+          def load_font(size):
+              for p in ('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+                        '/usr/share/fonts/truetype/freefont/FreeSansBold.ttf'):
+                  try:
+                      return ImageFont.truetype(p, size)
+                  except Exception:
+                      continue
+              return ImageFont.load_default()
+
+          def make_icon(path, size, transparent=False):
+              if not HAS_PIL:
+                  write_solid_png(path, size, size, (0, 0, 0, 0) if transparent else BRAND + (255,))
+                  print('icon generated (fallback solid):', path)
+                  return
+              img = Image.new('RGBA', (size, size), (0, 0, 0, 0) if transparent else BRAND + (255,))
+              d = ImageDraw.Draw(img)
+              d.ellipse([size*0.14, size*0.14, size*0.86, size*0.86], fill=BRAND + (255,))
+              f = load_font(int(size*0.5))
+              try:
+                  d.text((size//2, size//2), 'P', fill='white', anchor='mm', font=f)
+              except Exception:
+                  d.text((int(size*0.32), int(size*0.2)), 'P', fill='white', font=f)
+              img.save(path)
+              print('icon generated:', path)
+
+          def make_splash(path, w, h):
+              if not HAS_PIL:
+                  write_solid_png(path, w, h, BRAND + (255,))
+                  print('splash generated (fallback solid):', path)
+                  return
+              img = Image.new('RGB', (w, h), BRAND)
+              d = ImageDraw.Draw(img)
+              f = load_font(600)
+              try:
+                  d.text((w//2, h//2), 'P', fill='white', anchor='mm', font=f)
+              except Exception:
+                  d.text((int(w*0.42), int(h*0.44)), 'P', fill='white', font=f)
+              img.save(path)
+              print('splash generated:', path)
+
+          os.makedirs('assets', exist_ok=True)
+          make_icon('assets/icon.png', 1024)
+          make_icon('assets/adaptive-icon.png', 1024, transparent=True)
+          make_icon('assets/notification-icon.png', 96)
+          make_icon('assets/favicon.png', 48)
+          make_splash('assets/splash.png', 1242, 2436)
+          print('ALL ICONS READY')
+          PYEOF
 
       - name: Inject Supabase keys into App.js
         env:
