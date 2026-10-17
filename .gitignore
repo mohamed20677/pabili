@@ -1,14 +1,3 @@
-node_modules/
-.expo/
-dist/
-android/build/
-android/.gradle/
-android/app/build/
-**/*.jks
-**/*.p8
-**/*.p12
-**/*.key
-**/*.mobileprovision
-*.log
-.DS_Store
-.env*
+node_modules
+.env
+.expo
