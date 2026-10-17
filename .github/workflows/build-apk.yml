@@ -1,0 +1,179 @@
+name: Build Pabili APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - '*.zip'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Workflow version check
+        run: echo "=== BUILD-WORKFLOW VERSION 9 === If your log does NOT show VERSION 9, you clicked Re-run on an OLD failed run — GitHub re-executes the OLD definition. Always use the green 'Run workflow' button (fresh run of main) ==="
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/gradle/wrapper/gradle-wrapper.properties', '**/*.gradle', '**/*.gradle.kts') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Validate Supabase secrets
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          echo "URL length: ${#SUPABASE_URL}"
+          echo "KEY length: ${#SUPABASE_ANON_KEY}"
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "::error::Secrets SUPABASE_URL or SUPABASE_ANON_KEY are empty. Add them at Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          if [[ "$SUPABASE_URL" != https://* ]]; then
+            echo "::error::SUPABASE_URL must start with https://"
+            exit 1
+          fi
+          if [[ "$SUPABASE_ANON_KEY" != eyJ* ]]; then
+            echo "::error::SUPABASE_ANON_KEY must start with eyJ"
+            exit 1
+          fi
+
+      - name: Generate placeholder icons
+        run: |
+          python3 - <<'PY'
+          from PIL import Image, ImageDraw, ImageFont
+          import os
+          os.makedirs('assets', exist_ok=True)
+          # icon.png 1024x1024
+          im = Image.new('RGB', (1024, 1024), (14, 124, 91))
+          d = ImageDraw.Draw(im)
+          d.ellipse([250, 250, 774, 774], fill=(242, 181, 49))
+          try:
+            f = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 380)
+          except Exception:
+            f = ImageFont.load_default()
+          d.text((512, 470), 'P', fill='white', font=f, anchor='mm')
+          im.save('assets/icon.png')
+          # adaptive-icon.png 1024x1024 transparent
+          ai = Image.new('RGBA', (1024, 1024), (0, 0, 0, 0))
+          ad = ImageDraw.Draw(ai)
+          ad.ellipse([180, 180, 844, 844], fill=(14, 124, 91, 255))
+          ad.ellipse([280, 280, 744, 744], fill=(242, 181, 49, 255))
+          try:
+            f2 = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 320)
+            ad.text((512, 512), 'P', fill=(255, 255, 255, 255), font=f2, anchor='mm')
+          except Exception:
+            pass
+          ai.save('assets/adaptive-icon.png')
+          # notification-icon.png 96x96 white-on-transparent
+          ni = Image.new('RGBA', (96, 96), (0, 0, 0, 0))
+          nd = ImageDraw.Draw(ni)
+          nd.ellipse([8, 8, 88, 88], fill=(255, 255, 255, 255))
+          try:
+            nf = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 60)
+            nd.text((48, 48), 'P', fill=(14, 124, 91, 255), font=nf, anchor='mm')
+          except Exception:
+            pass
+          ni.save('assets/notification-icon.png')
+          # favicon.png 48x48
+          fv = Image.new('RGB', (48, 48), (14, 124, 91))
+          fd = ImageDraw.Draw(fv)
+          fd.ellipse([4, 4, 44, 44], fill=(242, 181, 49))
+          fv.save('assets/favicon.png')
+          # splash.png 1242x2436
+          sp = Image.new('RGB', (1242, 2436), (14, 124, 91))
+          sd = ImageDraw.Draw(sp)
+          sd.ellipse([421, 968, 821, 1368], fill=(242, 181, 49))
+          try:
+            sf = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 220)
+            sd.text((621, 1168), 'Pabili', fill='white', font=sf, anchor='mm')
+          except Exception:
+            pass
+          sp.save('assets/splash.png')
+          print('ICONS OK')
+          PY
+
+      - name: Clean icon refs from app.json
+        run: |
+          python3 - <<'PY'
+          import json, re, sys
+          p='app.json'
+          with open(p) as f: data=json.load(f)
+          expo=data.get('expo', {})
+          expo.pop('icon', None)
+          expo.pop('splash', None)
+          expo.pop('android', None)
+          expo.pop('ios', None)
+          data['expo']=expo
+          with open(p,'w') as f: json.dump(data, f, indent=2)
+          print('APP.JSON CLEAN OK')
+          PY
+
+      - name: Inject Supabase keys into App.js
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ ! -f App.js ]; then
+            echo "::error::App.js not found in repo root!"
+            echo "::error::Upload App.js to https://github.com/mohamed20677/pabili/upload/main (select App.js only)."
+            ls -la
+            exit 1
+          fi
+          python3 - <<PY
+          import os, re
+          url = os.environ['SUPABASE_URL']
+          key = os.environ['SUPABASE_ANON_KEY']
+          with open('App.js') as f: s = f.read()
+          if 'PASTE_YOUR' in s:
+            s = re.sub(r"PASTE_YOUR_PROJECT_URL_HERE", url, s)
+            s = re.sub(r"PASTE_YOUR_ANON_KEY_HERE", key, s)
+            with open('App.js','w') as f: f.write(s)
+            print('INJECT OK')
+          else:
+            print('Already injected - skipping')
+          PY
+
+      - name: Install dependencies
+        run: |
+          for i in 1 2 3; do
+            npm install --legacy-peer-deps --no-audit --no-fund && break || sleep 5
+          done
+
+      - name: Build debug APK
+        run: |
+          mkdir -p android/app/src/main/assets
+          npx expo prebuild --platform android --clean --no-install
+          npm install --legacy-peer-deps buffer@6.0.3 react-native-url-polyfill@2.0.0 --no-audit --no-fund
+          npx expo export:embed --platform android --dev false --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res
+          cd android && ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: pabili-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
