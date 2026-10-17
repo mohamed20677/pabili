@@ -54,11 +54,14 @@ async function uploadDoc(uri, role, field, name) {
   return { path, url:(data && data.publicUrl)||'', name };
 }
 async function pushKyc(role, status, data) {
-  if (!HAS_SB) return;
-  try { const uid = await sbUserId();
-        await supabase.from('kyc_requests').upsert(
-          { user_id: uid, role: role.toLowerCase(), status, data },
-          { onConflict: 'user_id,role' }); } catch {}
+  if (!HAS_SB) return { error: null };
+  try {
+    const uid = await sbUserId();
+    const { error } = await supabase.from('kyc_requests').upsert(
+      { user_id: uid, role: role.toLowerCase(), status, data },
+      { onConflict: 'user_id,role' });
+    return { error: error || null };
+  } catch (e) { return { error: e }; }
 }
 async function fetchKycQueue() {
   if (!HAS_SB) return [];
@@ -984,7 +987,7 @@ function ShopperKyc({ data, lang, onSubmit }) {
       const a = r.assets && r.assets[0] ? r.assets[0] : r;
       const up = await uploadDoc(a.uri || r.uri, 'Shopper', field, a.name || r.name || field);
       setter({ name: a.name || r.name || field, ...up });
-    } catch {} setBusy('');
+    } catch (e) { Alert.alert('Upload failed', String((e && e.message) || e)); } setBusy('');
   };
   const opts = ['vMotor','vCar','vBike','vWalk'];
   return (
@@ -1044,7 +1047,7 @@ function VendorKyc({ data, lang, onSubmit }) {
       const a = r.assets && r.assets[0] ? r.assets[0] : r;
       const up = await uploadDoc(a.uri || r.uri, 'Vendor', field, a.name || r.name || field);
       setter({ name: a.name || r.name || field, ...up });
-    } catch {} setBusy('');
+    } catch (e) { Alert.alert('Upload failed', String((e && e.message) || e)); } setBusy('');
   };
   return (
     <ScrollView contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
@@ -1358,8 +1361,12 @@ function Shell() {
   async function submitKyc(r, data) {
     const next = { ...kyc, [r]: { status: 'pending', data } };
     setKyc(next); await persistKyc(next);
-    await pushKyc(r, 'pending', data);
+    const res = await pushKyc(r, 'pending', data);
     setScreen('pending');
+    if (res && res.error) {
+      const m = (res.error && res.error.message) || String(res.error);
+      Alert.alert('Sync failed', 'Saved on this device, but Supabase rejected it: ' + m + '\n\nFix: run supabase-fix.sql in the Supabase SQL Editor (profiles trigger + unique constraint), then resend.');
+    }
   }
   async function adminApprove(r) {
     const next = { ...kyc, [r]: { status:'approved',
