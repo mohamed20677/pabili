@@ -2,12 +2,20 @@ name: Build Pabili APK
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - '*.zip'
 
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Workflow version check
+        run: echo "=== BUILD-WORKFLOW VERSION 9 === If your log does NOT show VERSION 9, you clicked Re-run on an OLD failed run — GitHub re-executes the OLD definition. Always use the green 'Run workflow' button (fresh run of main) ==="
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
@@ -139,19 +147,33 @@ jobs:
           SB_URL: ${{ secrets.SUPABASE_URL }}
           SB_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          echo "Repo root contents:"
+          echo "=== DEBUG: repo root ==="
+          pwd
           ls -la
+          echo "--- git-tracked files (first 50) ---"
+          git ls-files 2>/dev/null | head -50 || true
+          echo "=== Locating App.js ==="
+          rm -f "./App .js" 2>/dev/null || true
           APP_FILE=""
-          if [ -f "App.js" ]; then APP_FILE="App.js";
-          elif [ -f "app.js" ]; then APP_FILE="app.js";
-          elif [ -f "APP.JS" ]; then APP_FILE="APP.JS";
+          if [ -f "./App.js" ]; then
+            APP_FILE="./App.js"
+          else
+            APP_FILE="$(find . -maxdepth 3 -iname 'app.js' -not -path '*/node_modules/*' | head -1)"
           fi
           if [ -z "$APP_FILE" ]; then
-            echo "ERROR: App.js not found in repo root!"
-            echo "FIX: Upload App.js to https://github.com/mohamed20677/pabili/upload/main then re-run this workflow."
+            APP_FILE="$(find . -maxdepth 3 -iname 'app*.js' -not -path '*/node_modules/*' | head -1)"
+          fi
+          if [ -z "$APP_FILE" ]; then
+            echo "ERROR: App.js not found anywhere in the repo (searched 3 levels deep)."
+            echo "FIX: open https://github.com/mohamed20677/pabili/upload/main and upload App.js in the ROOT (not inside any folder), then click 'Run workflow' again."
             exit 1
           fi
-          echo "Using entry file: $APP_FILE"
+          if [ "$APP_FILE" != "./App.js" ] && [ "$APP_FILE" != "App.js" ]; then
+            echo "WARNING: App.js found in a subfolder ($APP_FILE) - copying it to repo root for the remaining steps."
+            cp "$APP_FILE" ./App.js
+            APP_FILE="./App.js"
+          fi
+          echo "Found App.js at: $APP_FILE"
           export APP_FILE
           node << 'EOF'
           const fs = require('fs');
