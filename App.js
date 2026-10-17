@@ -4,11 +4,12 @@ import { ActivityIndicator, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { C, LangCtx, Txt, supabase } from './src/lib';
-import { KycForm, Pending, PhoneScreen, RolePicker } from './src/Auth';
-import Customer from './src/Customer';
-import Vendor from './src/Vendor';
-import Driver from './src/Driver';
+import { C, LangCtx, Txt, supabase } from './lib';
+import { KycForm, Pending, PhoneScreen, RolePicker } from './Auth';
+import Customer from './Customer';
+import Vendor from './Vendor';
+import Driver from './Driver';
+import Admin from './Admin';
 
 export default function App() {
   const [lang, setLangState] = useState('en');
