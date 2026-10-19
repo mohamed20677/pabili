@@ -2,7 +2,7 @@
 // Matches the reference screenshots exactly (same layout/colors), localized en/tl.
 import React, { useEffect, useRef, useState } from 'react';
 import { Alert, Image, Pressable, View } from 'react-native';
-import { ADMIN_CODE, ADMIN_PHONE, isAdminPhone, normalizePhone, useT, validPhone, USER_TEST_CODE } from './lib';
+import { ADMIN_CODE, ADMIN_PHONE, isAdminPhone, normalizePhone, toPHDigits, useT, validPhone, USER_TEST_CODE } from './lib';
 import { Btn, Card, Field, Txt } from './ui';
 
 // ---------- 1) LOGIN (reference: full green hero + bottom white card) ----------
@@ -10,7 +10,7 @@ export function PhoneScreen({ onDone }) {
   const T = useT();
   const [num, setNum] = useState('');
   const [busy, setBusy] = useState(false);
-  const digits = normalizePhone(num);
+  const digits = toPHDigits(num); // canonical (0917… → 917…) — input echo keeps the 0
 
   const send = () => {
     if (!validPhone(digits)) {
@@ -44,7 +44,7 @@ export function PhoneScreen({ onDone }) {
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 14, borderWidth: 1,
                        borderColor: '#DCE5DF', borderRadius: 14, paddingHorizontal: 12 }}>
           <Txt b s={15}>🇵🇭 +63</Txt>
-          <Field value={num} onChangeText={setNum} keyboardType="phone-pad" maxLength={11}
+          <Field value={num} onChangeText={(v) => setNum(String(v ?? '').replace(/\D/g, ''))} keyboardType="phone-pad" maxLength={11}
                  placeholder={T('phonePh')}
                  style={{ flex: 1, borderWidth: 0, marginLeft: 8, backgroundColor: 'transparent' }} />
         </View>
@@ -72,7 +72,9 @@ export function OtpScreen({ digits, onVerified, onBack }) {
   }, []);
 
   const put = (i, v) => {
-    const c = normalizePhone(v).slice(-1);
+    // V14 FIX: accept '0' — the old normalizePhone(v) stripped it, so codes like
+    // 2067 could never be entered (the 0 vanished from the box)
+    const c = String(v ?? '').replace(/\D/g, '').slice(-1);
     const next = [...code]; next[i] = c; setCode(next);
     if (c && i < 3) refs[i + 1].current && refs[i + 1].current.focus();
   };
@@ -98,7 +100,7 @@ export function OtpScreen({ digits, onVerified, onBack }) {
         {code.map((v, i) => (
           <Field key={i} ref={refs[i]} value={v} onChangeText={(t) => put(i, t)} keyboardType="number-pad"
                  maxLength={1} style={{ width: 56, height: 60, marginHorizontal: 6, textAlign: 'center',
-                 fontSize: 24, fontWeight: '800', borderColor: v ? '#0E7C5B' : '#DCE5DF', borderWidth: 1.5 }} />
+                 fontSize: 24, fontWeight: '800', borderColor: v !== '' ? '#0E7C5B' : '#DCE5DF', borderWidth: 1.5 }} />
         ))}
       </View>
       <Txt c="#6B7A72" s={13} style={{ textAlign: 'center', marginTop: 26 }}>

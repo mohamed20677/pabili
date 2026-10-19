@@ -74,7 +74,11 @@ export const useT = () => { const { lang } = useContext(LangCtx); return (k) => 
 export const ADMIN_PHONE = '562989152';
 export const ADMIN_CODE = '1785';
 export const USER_TEST_CODE = '2067';
-export const normalizePhone = (s) => String(s || '').replace(/\D/g, '').replace(/^0+/, '');
+// V14 FIX: digits-only, PRESERVES zeros — typing '0' must never vanish.
+// (the old version stripped leading zeros here, which wiped '0' in OTP boxes)
+export const normalizePhone = (s) => String(s ?? '').replace(/\D/g, '');
+// canonical PH digits for validation/storage: 0917… → 917…, 0562989152 → 562989152
+export const toPHDigits = (s) => normalizePhone(s).replace(/^0+/, '');
 export const isAdminPhone = (d) => d === ADMIN_PHONE;
 export const validPhone = (d) => d === ADMIN_PHONE || d.length === 10;
 
