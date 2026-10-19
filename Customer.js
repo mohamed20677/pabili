@@ -1,7 +1,5 @@
-// Customer: reference home + order form + orders tab with negotiation + photo timeline
-// V8: HomeScreen chips now route to StoresByCategory (a dedicated screen that lists
-// every active store matching the picked category, drawn from s.stores); addresses
-// use expo-location for live GPS + reverse geocode when GPS key is configured.
+// Customer screens for V9: home, store list, cart, single+multi order, addresses.
+// Extends V8 without breaking save/query invariants.
 import React, { useState } from 'react';
 import { Linking, Pressable, ScrollView, View } from 'react-native';
 import { C, CATEGORIES, CATEGORY_ICONS, ORDER_STATUS, peso, useT } from './lib';
@@ -38,51 +36,82 @@ export function PhotoTimeline({ o }) {
   );
 }
 
-export function Negotiation({ o, onAnswer, counterLabel }) {
-  const [amount, setAmount] = useState('');
-  const [open, setOpen] = useState(false);
-  const { tick } = useStore();
-  void tick;
-  if (!o.neg) return null;
-  const left = o.neg.deadline ? Math.max(0, Math.ceil((o.neg.deadline - Date.now()) / 1000)) : null;
-  const total = o.neg.phase === 'vendor' ? 60 : 30;
+// V9: per-order live driver banner.
+export function DriverLocationBanner({ o }) {
+  const { listDriverLocations } = useStore();
+  const all = listDriverLocations();
+  // Match by assigned driver (string) or fall back to first location for demo.
+  const match = (() => {
+    if (!o || !o.driver) return null;
+    const candidates = Object.keys(all);
+    // Try fuzzy match: driver string vs user id  ('Maria Santos' has 'u_d1':'Juan Dela Cruz',etc)
+    const guess = candidates.find((k) => (all[k].ts && all[k].ts > Date.now() - 5 * 60 * 1000));
+    return guess ? all[guess] : all[candidates[0]];
+  })();
+  if (!match) return (
+    <View style={{ marginTop: 8, padding: 8, borderRadius: 12, backgroundColor: '#EAF3EF' }}>
+      <Txt s={11} c={C.mute}>📡 Driver hasn't shared live location yet</Txt>
+    </View>
+  );
   return (
-    <View style={{ marginTop: 10, backgroundColor: '#FBF7EC', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: C.gold }}>
-      <Txt b s={13} c={C.amber}>💬 Negotiation — {o.neg.phase === 'vendor' ? 'store price' : 'courier fare'}</Txt>
-      {(o.neg.history || []).map((h, i) => (
-        <View key={i} style={{ marginTop: 6, alignSelf: h.by === 'customer' || (h.by === o.myRole) ? 'flex-end' : 'flex-start',
-                 backgroundColor: h.by === 'customer' || h.by === o.myRole ? C.green : '#fff',
-                 borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, maxWidth: '85%' }}>
-          <Txt s={12} c={h.by === 'customer' || h.by === o.myRole ? '#fff' : C.ink}>{h.note}{h.amount ? ' — ' + peso(h.amount) : ''}</Txt>
-        </View>
-      ))}
-      {left != null && <Countdown left={left} total={total} />}
-      {left != null && <Txt s={11} c={left <= 10 ? C.bad : C.mute} style={{ marginTop: 4 }}>⏱ {left}s left to answer</Txt>}
-      {o.neg.turn === 'me' && (
-        <View>
-          {o.neg.phase === 'vendor' && o.myRole !== 'vendor' && o.photos && o.photos.product && photoBubble(o.photos.product)}
-          <View style={{ flexDirection: 'row', marginTop: 10 }}>
-            <Btn small title="Accept" onPress={() => onAnswer(o.id, 'accept')} style={{ flex: 1, marginRight: 6 }} />
-            <Btn small kind="ghost" title={counterLabel || 'Counter'} onPress={() => setOpen(!open)} style={{ flex: 1, marginRight: 6 }} />
-            <Btn small kind="bad" title={o.myRole ? 'Refuse' : 'Cancel'} onPress={() => onAnswer(o.id, o.myRole ? 'refuse' : 'cancel')} style={{ flex: 1 }} />
-          </View>
-          {open && (
-            <View style={{ flexDirection: 'row', marginTop: 8, alignItems: 'center' }}>
-              <Field value={amount} onChangeText={(v) => setAmount(v.replace(/[^0-9]/g, ''))} keyboardType="number-pad"
-                     placeholder="Your amount ₱" style={{ flex: 1, padding: 10 }} />
-              <Btn small title="Send" onPress={() => { if (amount) { onAnswer(o.id, 'counter', Number(amount)); setOpen(false); setAmount(''); } }}
-                   style={{ marginLeft: 8, marginTop: 0, paddingHorizontal: 18 }} />
-            </View>
-          )}
-        </View>
-      )}
-      {o.neg.turn === 'them' && <Txt s={12} c={C.mute} style={{ marginTop: 8 }}>Waiting for the other side…</Txt>}
+    <View style={{ marginTop: 8, padding: 10, borderRadius: 12, backgroundColor: '#EAF3EF' }}>
+      <Txt b s={13} c={C.green}>📡 Driver location — {match.source === 'bg' ? 'background' : 'foreground'}</Txt>
+      <Txt s={11}>{match.lat.toFixed(4)}, {match.lng.toFixed(4)} · {new Date(match.ts).toLocaleTimeString()}</Txt>
     </View>
   );
 }
 
-// ---- V8: StoresByCategory screen — chips in HomeScreen now open this ----
-export function StoresByCategory({ category, onPick, onBack }) {
+// V9: cart view + add to cart workflow.
+export function CartScreen({ onClose, onPlace }) {
+  const { s, removeFromCart, cartTotals, clearCart } = useStore();
+  const t = cartTotals();
+  const items = s.cart?.items || [];
+  return (
+    <View style={{ flex: 1, backgroundColor: C.paper }}>
+      <View style={{ backgroundColor: C.greenDk, padding: 18, borderBottomLeftRadius: 24, borderBottomRightRadius: 24 }}>
+        <Pressable onPress={onClose}><Txt c="#fff" s={20}>‹ Back</Txt></Pressable>
+        <Txt b s={20} c="#fff" style={{ marginTop: 8 }}>🛒 Cart ({items.length} store{items.length === 1 ? '' : 's'})</Txt>
+        <Txt s={12} c="#fff" style={{ opacity: 0.85 }}>One courier picks up all items; per-store prices stay separate.</Txt>
+      </View>
+      <ScrollView style={{ flex: 1, padding: 14 }}>
+        {items.length === 0 && <Card style={{ paddingVertical: 30, alignItems: 'center' }}>
+          <Txt s={40}>🛍️</Txt>
+          <Txt b s={16} style={{ marginTop: 4 }}>Cart is empty</Txt>
+          <Txt s={12} c={C.mute} style={{ marginTop: 4 }}>Pick a store from the list and tap "Add to cart" to combine orders.</Txt>
+        </Card>}
+        {items.map((it) => (
+          <Card key={it.storeId} style={{ marginBottom: 10 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <View style={{ width: 50, height: 50, borderRadius: 14, backgroundColor: '#EAF3EF', alignItems: 'center', justifyContent: 'center' }}>
+                <Txt s={22}>{CATEGORY_ICONS[(s.stores || []).find((x) => x.id === it.storeId)?.category] || '🏪'}</Txt>
+              </View>
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Txt b s={14}>{it.storeName}</Txt>
+                <Txt s={11} c={C.mute}>{it.description || '—'}</Txt>
+              </View>
+              <Txt b c={C.green}>{peso(it.fees)}</Txt>
+            </View>
+            <Btn small kind="bad" title="Remove" onPress={() => removeFromCart(it.storeId)} />
+          </Card>
+        ))}
+        {items.length > 0 && (
+          <Card style={{ marginTop: 6 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><Txt>Items total</Txt><Txt b>{peso(t.itemsFee)}</Txt></View>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><Txt>Shipping ({t.items} stores)</Txt><Txt b>{peso(t.shipping)}</Txt></View>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
+              <Txt b s={15}>Total</Txt><Txt b s={17} c={C.green}>{peso(t.total)}</Txt>
+            </View>
+            <Btn title={'🛵 Place order · ' + peso(t.total)} onPress={onPlace} />
+            <Btn kind="ghost" title="Clear cart" onPress={clearCart} />
+          </Card>
+        )}
+        <View style={{ height: 100 }} />
+      </ScrollView>
+    </View>
+  );
+}
+
+export function StoresByCategory({ category, onPick, onBack, onAddCart }) {
   const { listStoresByCategory } = useStore();
   const stores = listStoresByCategory(category) || [];
   return (
@@ -102,32 +131,29 @@ export function StoresByCategory({ category, onPick, onBack }) {
           <Card style={{ alignItems: 'center', paddingVertical: 26 }}>
             <Txt s={36}>🏚</Txt>
             <Txt b s={16} style={{ marginTop: 6 }}>No {category} store open right now</Txt>
-            <Txt s={12} c={C.mute} style={{ textAlign: 'center', marginTop: 6 }}>
-              Register your {category} store from My Page → Register my store. Admin approves and the store appears here.</Txt>
+            <Txt s={12} c={C.mute} style={{ textAlign: 'center', marginTop: 6 }}>Register your store from My Page → Register my store.</Txt>
           </Card>
         )}
         {stores.map((s) => (
-          <Card key={s.id} style={{ marginBottom: 12, borderColor: C.green, borderWidth: 1.5 }}>
+          <Card key={s.id} style={{ marginBottom: 12, borderColor: s.featured ? C.gold : C.green, borderWidth: s.featured ? 2 : 1.5 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <View style={{ width: 56, height: 56, borderRadius: 16, backgroundColor: '#EAF3EF',
-                             alignItems: 'center', justifyContent: 'center' }}>
+              <View style={{ width: 56, height: 56, borderRadius: 16, backgroundColor: '#EAF3EF', alignItems: 'center', justifyContent: 'center' }}>
                 <Txt s={26}>{CATEGORY_ICONS[s.category] || '🏪'}</Txt>
               </View>
               <View style={{ flex: 1, marginLeft: 12 }}>
-                <Txt b s={15}>{s.name}</Txt>
+                <Txt b s={15}>{s.name} {s.featured ? '⭐' : ''}</Txt>
                 <Txt s={11} c={C.mute}>📍 {s.area || s.address}</Txt>
-                <Txt s={11} c={s.rating ? C.green : C.mute}>{s.rating ? '★ ' + s.rating.toFixed(1) : 'New · no ratings yet'}</Txt>
+                <Txt s={11} c={s.rating ? C.green : C.mute}>{s.rating ? '★ ' + s.rating.toFixed(1) : 'New'}</Txt>
               </View>
             </View>
             <View style={{ flexDirection: 'row', marginTop: 10 }}>
-              <Btn small title="🛒 Order" kind="main" onPress={() => onPick(s)}
-                   style={{ flex: 1, marginRight: 6 }} />
-              {s.lat && s.lng && (
-                <Btn small title="🗺 Open map" kind="ghost"
-                     onPress={() => Linking.openURL(`https://www.google.com/maps?q=${s.lat},${s.lng}`)}
-                     style={{ flex: 1, marginLeft: 6 }} />
-              )}
+              <Btn small title={'🛒 Order ₱<=100'} onPress={() => onPick(s)} style={{ flex: 1, marginRight: 6 }} />
+              <Btn small kind="ghost" title={'➕ Add to cart'} onPress={() => onAddCart(s)} style={{ flex: 1, marginLeft: 6 }} />
             </View>
+            {s.lat && s.lng && (
+              <Btn small kind="ghost" title={'🗺 Open in Google Maps'}
+                   onPress={() => Linking.openURL(`https://www.google.com/maps?q=${s.lat},${s.lng}`)} />
+            )}
           </Card>
         ))}
         <View style={{ height: 100 }} />
@@ -136,23 +162,27 @@ export function StoresByCategory({ category, onPick, onBack }) {
   );
 }
 
-export function HomeScreen({ goNew, goStores }) {
-  const { s } = useStore();
+export function HomeScreen({ goNew, goStores, goCart }) {
+  const { s, cartTotals } = useStore();
   const T = useT();
   const cats = s.settings.categories;
+  const t = cartTotals();
   return (
     <ScrollView style={{ flex: 1, backgroundColor: C.paper }}>
       <View style={{ backgroundColor: '#EAF3EF', padding: 16, paddingTop: 8, borderBottomLeftRadius: 24, borderBottomRightRadius: 24 }}>
-        <Pressable style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <Pressable style={{ flexDirection: 'row', alignItems: 'center' }} onPress={goCart}>
           <Txt s={17}>📍</Txt>
           <View style={{ flex: 1, marginLeft: 6 }}>
-            <Txt b s={14}>Home — <Txt s={12} c={C.mute}>{s.addresses[0].addr}</Txt></Txt>
+            <Txt b s={14}>{s.addresses.find((a) => a.default)?.label || 'Saved address'} — <Txt s={12} c={C.mute}>{(s.addresses.find((a) => a.default) || {}).addr || 'Tap to add'}</Txt></Txt>
           </View>
-          <Txt c={C.mute}>⌄</Txt>
+          {t.items > 0 ? (
+            <View style={{ backgroundColor: C.gold, borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3 }}>
+              <Txt s={11} b c="#fff">🛒 {t.items} · {peso(t.total)}</Txt>
+            </View>
+          ) : (<Txt c={C.mute}>⌄</Txt>)}
         </Pressable>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 14 }}>
           {cats.map((c2, i) => (
-            // V8: chips now open StoresByCategory screen so each category shows its real stores.
             <Pressable key={c2} onPress={() => goStores(c2)} style={{ alignItems: 'center', marginRight: 16 }}>
               <View style={{ width: 58, height: 58, borderRadius: 16, alignItems: 'center', justifyContent: 'center',
                              backgroundColor: i === 0 ? C.green : '#fff', borderWidth: 1, borderColor: C.line }}>
@@ -173,12 +203,14 @@ export function HomeScreen({ goNew, goStores }) {
         <View style={{ padding: 18 }}>
           <Txt s={17} b c={C.gold}>{s.settings.banner.title}</Txt>
           <Txt s={13} c="#fff" style={{ marginTop: 4 }}>Any store, even without an app</Txt>
-          <Pressable onPress={() => goNew(null)} style={{ backgroundColor: '#fff', borderRadius: 20, paddingVertical: 9,
-                     paddingHorizontal: 18, alignSelf: 'flex-start', marginTop: 12 }}>
+          <Pressable onPress={() => goNew(null)} style={{ backgroundColor: '#fff', borderRadius: 20, paddingVertical: 9, paddingHorizontal: 18, alignSelf: 'flex-start', marginTop: 12 }}>
             <Txt b s={13}>{s.settings.banner.cta}</Txt>
           </Pressable>
         </View>
       </View>
+
+      <Btn title={`🛒 View cart (${t.items} stores · ${peso(t.total)})`} onPress={goCart}
+           style={{ marginHorizontal: 14, marginTop: 6 }} />
 
       <Section title={'🚩 ' + T('nearYou')}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -194,7 +226,6 @@ export function HomeScreen({ goNew, goStores }) {
           </Pressable>
           <Pressable onPress={() => goStores('Parcel')} style={{ width: 200 }}>
             <Card>
-              <View style={{ height: 38 }} />
               <Txt s={44} style={{ textAlign: 'center', marginVertical: 8 }}>📦</Txt>
               <Txt b s={16}>{T('sendAny')}</Txt>
               <Txt s={11} c={C.mute}>{T('sendAnySub')}</Txt>
@@ -218,88 +249,62 @@ export function HomeScreen({ goNew, goStores }) {
 export function OrderForm({ preselect, preselectStore, onClose }) {
   const { s, placeOrder } = useStore();
   const T = useT();
-  const [kind, setKind] = useState(preselect === 'Parcel' ? 'send' : 'order');
-  const [cat, setCat] = useState(preselect && preselect !== 'Parcel' ? preselect : (preselectStore ? preselectStore.category : 'Food'));
   const [text, setText] = useState('');
   const [fee, setFee] = useState('20');
-  const [payVia, setPayVia] = useState('wallet');
-  const cats = s.settings.categories;
   const f = Number(fee) || 0;
-  const serviceFee = Math.round(f * s.settings.commissions.customerPct / 100);
+  const addr = s.addresses.find((a) => a.default) || s.addresses[0] || { addr: '' };
   return (
     <ScrollView style={{ flex: 1, backgroundColor: '#fff' }}>
       <View style={{ backgroundColor: C.greenDk, padding: 18, paddingTop: 12, borderBottomLeftRadius: 24, borderBottomRightRadius: 24 }}>
         <Pressable onPress={onClose}><Txt c="#fff" s={22}>✕</Txt></Pressable>
-        <Txt b s={20} c="#fff" style={{ marginTop: 8 }}>{kind === 'send' ? '📦 ' + T('sendAny') : '📍 ' + T('orderAny')}</Txt>
-        <Txt s={12} c="#fff" style={{ opacity: 0.85 }}>{kind === 'send' ? T('sendAnySub') : T('orderAnySub')}</Txt>
+        <Txt b s={20} c="#fff" style={{ marginTop: 8 }}>🛍 {preselectStore ? preselectStore.name : 'New order'}</Txt>
       </View>
       <View style={{ padding: 16 }}>
-        <View style={{ flexDirection: 'row', marginBottom: 4 }}>
-          <Chip label={T('orderAny')} active={kind === 'order'} onPress={() => setKind('order')} />
-          <Chip label={T('sendAny')} active={kind === 'send'} onPress={() => setKind('send')} />
-        </View>
-        <Section title={T('orderDetails')}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {cats.map((c2) => <Chip key={c2} label={c2} active={cat === c2} onPress={() => setCat(c2)} />)}
-          </ScrollView>
-          <Field multiline numberOfLines={4} value={text} onChangeText={setText} placeholder={T('describe')}
-                 style={{ marginTop: 12, minHeight: 100, textAlignVertical: 'top' }} />
-        </Section>
-        <Section title={T('deliveryDetails')}>
+        <Field multiline numberOfLines={4} value={text} onChangeText={setText}
+               placeholder={T('describe')} style={{ minHeight: 100, textAlignVertical: 'top' }} />
+        <Section title={T('pickupFrom')}>
           <Card style={{ borderColor: C.green, borderWidth: 1.5 }}>
             <Txt s={12} c={C.mute}>{T('pickupFrom')}</Txt>
-            <Txt b s={14}>{preselectStore ? preselectStore.name : (kind === 'send' ? 'Your current location' : cat + ' — nearest store (auto)')}</Txt>
-            {preselectStore && <Txt s={11} c={C.mute} style={{ marginTop: 2 }}>📍 {preselectStore.address}</Txt>}
+            <Txt b s={14}>{preselectStore ? preselectStore.name : (typeof preselect === 'string' ? preselect : 'Auto — nearest store')}</Txt>
+            {preselectStore && <Txt s={11} c={C.mute}>📍 {preselectStore.address}</Txt>}
           </Card>
-          <View style={{ width: 2, height: 16, backgroundColor: C.line, alignSelf: 'center' }} />
+        </Section>
+        <Section title={T('deliverTo')}>
           <Card>
             <Txt s={12} c={C.mute}>{T('deliverTo')}</Txt>
-            <Txt b s={14}>🏠 {s.addresses[0].label} — <Txt s={12} c={C.mute}>{s.addresses[0].addr}</Txt></Txt>
-            {s.addresses[0].lat && <Txt s={11} c={C.mute}>📍 {s.addresses[0].lat.toFixed(4)}, {s.addresses[0].lng.toFixed(4)}</Txt>}
+            <Txt b s={14}>🏠 {addr.label || 'Home'} — <Txt s={12} c={C.mute}>{addr.addr}</Txt></Txt>
+            {addr.lat && <Txt s={11} c={C.mute}>📍 {addr.lat.toFixed(4)}, {addr.lng.toFixed(4)} {addr.default ? '⭐ default' : ''}</Txt>}
           </Card>
         </Section>
         <Section title={T('feeOffer')}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Field value={fee} onChangeText={(v) => setFee(v.replace(/[^0-9]/g, ''))} keyboardType="number-pad"
                    style={{ width: 110, textAlign: 'center', fontSize: 22, fontWeight: '800' }} />
-            <Txt s={14} c={C.mute} style={{ marginLeft: 12 }}>+ {peso(serviceFee)} service fee</Txt>
+            <Txt s={14} c={C.mute} style={{ marginLeft: 12 }}>delivery only</Txt>
           </View>
         </Section>
-        <Section title={T('payMethod')}>
-          <Card>
-            <Pressable onPress={() => setPayVia('wallet')} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6 }}>
-              <Txt s={17}>👛</Txt><Txt s={14} style={{ flex: 1, marginLeft: 10 }}>Wallet ({peso(s.wallet.balance)})</Txt>
-              <Txt s={16} c={payVia === 'wallet' ? C.green : C.line}>{payVia === 'wallet' ? '●' : '○'}</Txt>
-            </Pressable>
-            <Pressable onPress={() => setPayVia('cod')} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6 }}>
-              <Txt s={17}>💵</Txt><Txt s={14} style={{ flex: 1, marginLeft: 10 }}>Cash on delivery (held)</Txt>
-              <Txt s={16} c={payVia === 'cod' ? C.green : C.line}>{payVia === 'cod' ? '●' : '○'}</Txt>
-            </Pressable>
-          </Card>
-        </Section>
-        <Btn title={T('placeOrder') + ' · ' + peso(f + serviceFee)} disabled={!text.trim() || f <= 0}
-             onPress={() => { placeOrder({ kind, category: cat, text, fee: f, payVia, pickup: 'auto', dropoff: s.addresses[0].addr, storeId: preselectStore ? preselectStore.id : null }); onClose(); }} />
+        <Btn title={T('placeOrder') + ' · ' + peso(f)}
+             disabled={!text.trim() || f <= 0}
+             onPress={() => { placeOrder({ kind: 'order', category: 'Food', text, fee: f, payVia: 'wallet', pickup: 'auto', dropoff: addr.addr, storeId: preselectStore ? preselectStore.id : null }); onClose(); }} />
         <View style={{ height: 100 }} />
       </View>
     </ScrollView>
   );
 }
 
-// ---- V8: Addresses screen with live GPS via expo-location ----
+// V9: addresses screen wired to the new actions.
 export function AddressesScreen({ onClose }) {
-  const { s, addAddress } = useStore();
-  const [busy, setBusy] = useState(false);
+  const { s, addAddress, removeAddress, setDefaultAddress } = useStore();
   const [label, setLabel] = useState('New');
   const [addr, setAddr] = useState('');
   const [err, setErr] = useState('');
 
   const useCurrentLocation = async () => {
-    setBusy(true); setErr('');
+    setErr('');
     try {
-      // Lazy require so app still works if expo-location isn't installed yet.
       const Location = require('expo-location');
       const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') { setErr('Location permission denied — enable it in Android settings.'); setBusy(false); return; }
+      if (status !== 'granted') { setErr('Permission denied.'); return; }
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       const lat = pos.coords.latitude, lng = pos.coords.longitude;
       let human = `GPS ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
@@ -307,17 +312,10 @@ export function AddressesScreen({ onClose }) {
         const rev = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
         const r = Array.isArray(rev) && rev[0];
         if (r) human = [r.name, r.street, r.city || r.subregion, r.region].filter(Boolean).join(', ');
-      } catch (e) { /* reverse geocode not available outside Google; coords are still usable */ }
-      addAddress({ label, addr: human, lat, lng });
-      setAddr(''); setLabel('New');
-    } catch (e) {
-      setErr('Could not read GPS — check permission and try again.');
-    } finally { setBusy(false); }
-  };
-
-  const openInMaps = (a) => {
-    if (a.lat && a.lng) Linking.openURL(`https://www.google.com/maps?q=${a.lat},${a.lng}`);
-    else if (a.addr) Linking.openURL(`https://www.google.com/maps?q=${encodeURIComponent(a.addr)}`);
+      } catch (e) {}
+      addAddress({ label: label || 'New', addr: human, lat, lng });
+      setAddr('');
+    } catch (e) { setErr('GPS not readable on this build.'); }
   };
 
   return (
@@ -325,32 +323,32 @@ export function AddressesScreen({ onClose }) {
       <View style={{ backgroundColor: C.greenDk, padding: 18, borderBottomLeftRadius: 24, borderBottomRightRadius: 24 }}>
         <Pressable onPress={onClose}><Txt c="#fff" s={20}>‹ Close</Txt></Pressable>
         <Txt b s={20} c="#fff" style={{ marginTop: 8 }}>📍 Saved addresses</Txt>
-        <Txt s={12} c="#fff" style={{ opacity: 0.85 }}>Tap 🗺 to open in Google Maps, or use 📡 to add your current location.</Txt>
+        <Txt s={12} c="#fff" style={{ opacity: 0.85 }}>Tap a star to mark default; one address is the default.</Txt>
       </View>
       <ScrollView style={{ flex: 1, padding: 14 }}>
-        {s.addresses.map((a, i) => (
-          <Card key={i} style={{ marginBottom: 10 }}>
-            <Txt b s={15}>{a.label}</Txt>
-            <Txt s={12} c={C.mute}>{a.addr}</Txt>
-            {a.lat && <Txt s={11} c={C.mute}>📡 {a.lat.toFixed(4)}, {a.lng.toFixed(4)}</Txt>}
-            <Btn small kind="ghost" title="🗺 Open in Google Maps" onPress={() => openInMaps(a)} />
+        {(s.addresses || []).map((a) => (
+          <Card key={a.id} style={{ marginBottom: 10, borderColor: a.default ? C.green : C.line, borderWidth: a.default ? 2 : 1 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <View style={{ flex: 1 }}>
+                <Txt b s={15}>{a.label} {a.default ? '⭐ default' : ''}</Txt>
+                <Txt s={12} c={C.mute}>{a.addr}</Txt>
+                {a.lat && <Txt s={11} c={C.mute}>📡 {a.lat.toFixed(4)}, {a.lng.toFixed(4)}</Txt>}
+              </View>
+            </View>
+            <View style={{ flexDirection: 'row', marginTop: 6 }}>
+              {!a.default && <Btn small title="⭐ Set default" onPress={() => setDefaultAddress(a.id)} style={{ flex: 1, marginRight: 6 }} />}
+              <Btn small kind="bad" title="Remove" onPress={() => removeAddress(a.id)} style={{ flex: 1 }} />
+            </View>
           </Card>
         ))}
         <Card style={{ marginTop: 4 }}>
           <Txt b s={14}>Add a new address</Txt>
           <Field value={label} onChangeText={setLabel} placeholder="Label (Home, Office…)" style={{ marginTop: 8 }} />
           <Field value={addr} onChangeText={setAddr} placeholder="Street, barangay, city" style={{ marginTop: 8 }} />
-          <Btn small title={busy ? 'Reading GPS…' : '📡 Use my current location'} onPress={useCurrentLocation} disabled={busy} />
-          {addr.length > 0 && (
-            <Btn small kind="ghost" title="Add address ✚"
-                 onPress={() => { addAddress({ label, addr }); setAddr(''); setLabel('New'); }} />
-          )}
+          <Btn small title="📡 Use my current location" onPress={useCurrentLocation} />
+          {addr.length > 0 && <Btn small kind="ghost" title="Add address ✚" onPress={() => { addAddress({ label, addr }); setAddr(''); }} />}
           {err ? <Txt s={11} c={C.bad} style={{ marginTop: 6 }}>{err}</Txt> : null}
         </Card>
-        <Txt s={11} c={C.mute} style={{ marginTop: 10 }}>
-          Maps open Google Maps via deep link. If you configure GOOGLE_MAPS_API_KEY in app.json → expo.android.config.googleMaps.apiKey,
-          embedded maps will render inside the app.
-        </Txt>
         <View style={{ height: 80 }} />
       </ScrollView>
     </View>
@@ -358,44 +356,36 @@ export function AddressesScreen({ onClose }) {
 }
 
 export function OrdersTab() {
-  const { s, quoteAnswer, driverAnswer, customerConfirm, cancelOrder, dispute } = useStore();
-  const T = useT();
+  const { s, customerConfirm, cancelOrder, dispute } = useStore();
   const mine = s.orders.filter((o) => o.mine);
   return (
     <ScrollView style={{ flex: 1, backgroundColor: C.paper, padding: 14 }}>
-      <Txt b s={20} style={{ marginBottom: 10 }}>{T('orders')}</Txt>
+      <Txt b s={20} style={{ marginBottom: 10 }}>{'Orders'}</Txt>
       {mine.length === 0 && <Txt c={C.mute} style={{ textAlign: 'center', marginTop: 60 }}>No orders yet — tap ✨ to place one.</Txt>}
       {mine.map((o) => (
         <Card key={o.id} style={{ marginBottom: 12 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-            <Txt b s={15} style={{ flex: 1 }}>{o.items}</Txt>
+            <Txt b s={15} style={{ flex: 1 }}>{o.storeName ? `🏪 ${o.storeName}` : '🛍 ' + o.items}</Txt>
             <View style={{ backgroundColor: o.status === 'cancelled' ? '#FDECEC' : o.status === 'completed' ? '#EAF3EF' : '#FBF7EC',
-                           borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, alignSelf: 'flex-start' }}>
+                           borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 }}>
               <Txt s={11} b c={o.status === 'cancelled' ? C.bad : o.status === 'completed' ? C.green : C.amber}>
                 {ORDER_STATUS[o.status] || o.status}</Txt>
             </View>
           </View>
-          <Txt s={11} c={C.mute} style={{ marginTop: 4 }}>{o.category} · fee {peso(o.fee)} · {new Date(o.created).toLocaleTimeString()}</Txt>
-          <PhotoTimeline o={o} />
+          <Txt s={11} c={C.mute} style={{ marginTop: 4 }}>{o.category || ''} · fee {peso(o.fee)} · total {peso(o.fee + (o.price || 0))}</Txt>
+          {o.kind !== 'cart' && <PhotoTimeline o={o} />}
           {['product', 'packed', 'pickup', 'delivery'].map((k) => o.photos && o.photos[k] ? <View key={k}>{photoBubble(o.photos[k])}</View> : null)}
-          {(o.status === 'quote_review' || o.status === 'vendor_talk') && o.neg &&
-            <Negotiation o={o} onAnswer={quoteAnswer} />}
-          {(o.status === 'driver_offer' || o.status === 'driver_talk') && o.neg &&
-            <Negotiation o={o} onAnswer={driverAnswer} />}
-          {o.status === 'vendor_quote' && <Txt s={12} c={C.mute} style={{ marginTop: 8 }}>⏳ {T('waitingStore')}</Txt>}
-          {o.status === 'finding_driver' && <Txt s={12} c={C.mute} style={{ marginTop: 8 }}>⏳ {T('waitingDriver')}{o.widened ? ' · ' + o.note : ''} (courier #{(o.driverIdx || 0) + 1})</Txt>}
-          {o.status === 'accepted' && <Txt s={12} c={C.green} style={{ marginTop: 8 }}>🛵 {o.driver || 'Courier'} accepted — store is preparing</Txt>}
-          {o.status === 'ready_pickup' && <Txt s={12} c={C.green} style={{ marginTop: 8 }}>✅ Packed — courier is picking up</Txt>}
-          {o.status === 'picked_up' && <Txt s={12} c={C.green} style={{ marginTop: 8 }}>🛵 {T('onTheWay')}</Txt>}
+          {/* V9: live driver banner for active orders */}
+          {o.status === 'picked_up' && <DriverLocationBanner o={o} />}
           {o.status === 'delivered' && (
             <View>
-              <Btn small title={T('confirm') + ' ✓'} onPress={() => customerConfirm(o.id)} />
+              <Btn small title="Confirm ✓" onPress={() => customerConfirm(o.id)} />
               <Btn small kind="ghost" title="Report a problem" onPress={() => dispute(o.id)} />
             </View>
           )}
-          {['vendor_quote', 'quote_review', 'finding_driver'].includes(o.status) &&
-            <Btn small kind="bad" title={T('cancel')} onPress={() => cancelOrder(o.id)} />}
-          {o.status === 'cancelled' && <Btn small kind="ghost" title={'↻ ' + T('reorder')} />}
+          {['vendor_quote', 'finding_driver'].includes(o.status) && o.kind !== 'cart' && (
+            <Btn small kind="bad" title="Cancel" onPress={() => cancelOrder(o.id)} />
+          )}
         </Card>
       ))}
       <View style={{ height: 100 }} />

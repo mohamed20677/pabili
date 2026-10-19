@@ -1,4 +1,10 @@
-// Pabili PH — theme, i18n, constants, shared rules (full build)
+// Pabili PH — theme, i18n, constants, shared rules + V9 payout providers
+//
+// V9 — Withdrawal rules (PH market): the minimum payout amount, the
+// flat fee per channel, the daily cap per user, and the saga
+// (pending → approved/rejected → paid-stub). Real disbursement requires
+// the provider's API; the UI marks every live call as a stub that
+// refuses to pretend the money moved.
 import { createContext, useContext } from 'react';
 
 export const C = {
@@ -46,6 +52,9 @@ const STR = {
     waitingStore: 'Waiting for the store to confirm stock and price', waitingDriver: 'Finding a courier',
     onTheWay: 'On the way', deliveredC: 'Delivered — please confirm', completed: 'Completed',
     lang: 'Language', newOrder: 'New order',
+    // V9 strings
+    withdraw: 'Withdraw', addToCart: 'Add to cart', cart: 'Cart', multiStore: 'Order from many stores',
+    withdrawMin: 'Min ₱100 · fees apply', featured: 'Featured',
   },
   tl: {
     login: 'Mag-log in', sendCode: 'Ipadala ang code', verify: 'I-verify', agree: 'Sumang-ayon ako',
@@ -54,16 +63,17 @@ const STR = {
     counter: 'Mag-counter', refuse: 'Tanggihan', cancel: 'Kanselahin', reorder: 'I-order ulit',
     confirm: 'Kumpirmahin', approve: 'Aprubahan', reject: 'Tanggihan', logout: 'Mag-log out',
     completed: 'Tapos na', back: 'Bumalik', lang: 'Wika', newOrder: 'Bagong order',
+    withdraw: 'Mag-withdraw', addToCart: 'Idagdag', cart: 'Cart', multiStore: 'Order mula sa maraming store',
+    withdrawMin: 'Min ₱100 · may bayad', featured: 'Itinampok',
   },
 };
 export const LangCtx = createContext({ lang: 'en', setLang: () => {} });
 export const useT = () => { const { lang } = useContext(LangCtx); return (k) => (STR[lang] && STR[lang][k]) || STR.en[k] || k; };
 
-// ---------- auth constants (stage 1 testing) ----------
-export const ADMIN_PHONE = '562989152';   // 0562989152 without the leading 0
+// ---------- auth constants ----------
+export const ADMIN_PHONE = '562989152';
 export const ADMIN_CODE = '1785';
-// BUILD V8: hard-coded user OTP changed 1234 → 2067 (admin 1785 unchanged).
-export const USER_TEST_CODE = '2067';     // TESTING ONLY — remove when SMS goes live
+export const USER_TEST_CODE = '2067';
 export const normalizePhone = (s) => String(s || '').replace(/\D/g, '').replace(/^0+/, '');
 export const isAdminPhone = (d) => d === ADMIN_PHONE;
 export const validPhone = (d) => d === ADMIN_PHONE || d.length === 10;
@@ -81,7 +91,6 @@ export const ORDER_STATUS = {
   picked_up: 'On the way', delivered: 'Delivered — please confirm',
   completed: 'Completed', cancelled: 'Cancelled', disputed: 'Under admin review',
 };
-// photo gates: each transition REQUIRES a photo (proof chain)
 export const PHOTO_STEPS = [
   { key: 'product', by: 'vendor', label: 'Actual product photo' },
   { key: 'packed', by: 'vendor', label: 'Packed order photo' },
@@ -90,3 +99,34 @@ export const PHOTO_STEPS = [
 ];
 export const uid = () => 'id_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 export const fmtTime = (ts) => new Date(ts).toLocaleString();
+
+// ---------- V9 payout (PH) ----------
+// Each provider config carries: minimum payout, flat fee in PHP, daily cap, kind.
+// `kind` is the rails we route on: GCash e-wallet, Maya e-wallet, InstaPay (real-time)
+// or PESONet (next-day batch). The UI surfaces these honestly — no fake "Sent!" prompts.
+export const WITHDRAWAL_PROVIDERS = {
+  GCash:    { kind: 'ewallet',    label: 'GCash (wallet)',    icon: '💚', min: 100, fee: 15, daily_cap: 50000 },
+  Maya:     { kind: 'ewallet',    label: 'Maya (wallet)',     icon: '🟢', min: 100, fee: 15, daily_cap: 50000 },
+  InstaPay: { kind: 'instapay',   label: 'InstaPay (bank)',   icon: '🏦', min: 500, fee: 25, daily_cap: 200000 },
+  PESONet:  { kind: 'pesonet',    label: 'PESONet (bank)',    icon: '🛡️', min: 200, fee: 50, daily_cap: 500000 },
+};
+export const MIN_WITHDRAWAL = Math.min(...Object.values(WITHDRAWAL_PROVIDERS).map((p) => p.min));
+export const WITHDRAWAL_STATUS = {
+  pending:  'pending request — admin review',
+  approved: 'approved by admin — waiting for rails',
+  paid:     'paid (stub — provider keys not yet configured)',
+  paid_stub:'paid (stub — provider keys not yet configured)',
+  rejected: 'rejected — funds returned',
+};
+// Limits enforced in V9 (safe defaults inside the JS store):
+export const WITHDRAWAL_DAILY_CAP_GLOBAL = 1000000;
+export const WITHDRAWAL_LIMITS = { max_per_request: 50000, max_concurrent_pending: 3 };
+
+// Background-geo honest disclaimer (read by Customer.js + Driver.js:
+export const BG_GEO = {
+  // The web version cannot run a foreground watcher with the screen locked —
+  // we promise no more than that, and we mark every "live" GPS read with
+  // whether it came from foreground watchPosition or a capacity-tracked tick.
+  webLimitation: 'Browsers halt watchPosition when the page is backgrounded.',
+  apkPath: 'Capacitor/Expo Dev Build can run expo-task-manager + expo-location for true background updates.',
+};
