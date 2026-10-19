@@ -230,6 +230,10 @@ export function StoreProvider({ children }) {
     setDefaultAddress: (id) => setS((c) => ({
       ...c, addresses: (c.addresses || []).map((x) => ({ ...x, default: x.id === id })),
     })),
+    // V15 restore: editing an existing address (was missing since V9).
+    updateAddress: (id, patch) => setS((c) => ({
+      ...c, addresses: (c.addresses || []).map((x) => x.id !== id ? x : { ...x, ...(patch || {}) }),
+    })),
     getDefaultAddress: () => {
       const cur = sRef.current; if (!cur) return null;
       return (cur.addresses || []).find((a) => a.default) || cur.addresses[0] || null;
@@ -389,6 +393,9 @@ export function StoreProvider({ children }) {
       n.wallet.tx = [{ id: uid(), amount, kind: 'topup', ts: now() }, ...n.wallet.tx]; return n;
     }),
     addCoupon: (code) => setS((c) => ({ ...c, profile: { ...c.profile, coupons: [...c.profile.coupons, code] } })),
+    // V15 restore: vendor catalog actions (Vendor.js + Driver.js call these).
+    catalogAdd: (name, price) => setS((c) => ({ ...c, catalog: [...(c.catalog || []), { id: uid(), name, price }] })),
+    catalogDel: (id) => setS((c) => ({ ...c, catalog: (c.catalog || []).filter((x) => x.id !== id) })),
     placeOrder: (draft) => setS((c) => {
       const n = { ...c };
       const o = { id: uid(), mine: true, kind: draft.kind, category: draft.category, items: draft.text,
@@ -396,6 +403,79 @@ export function StoreProvider({ children }) {
                   storeId: draft.storeId || null, photos: {}, neg: null, created: now(), updated: now(), payVia: draft.payVia };
       n.orders = [o, ...n.orders]; pushAlert(n, 'Order placed'); return n;
     }),
+    // ---- V15 restore: full order lifecycle (V8 verbatim; these were dropped in
+    // the V9 rewrite, which crashed every screen that called them) ----
+    quoteAnswer: (orderId, action, amount) => setS((c) => ({
+      ...c, orders: c.orders.map((o) => {
+        if (o.id !== orderId) return o;
+        const n = { ...o, updated: now() };
+        if (action === 'accept') { n.neg = null; n.status = 'finding_driver'; n.paidHeld = true; pushAlert(c, 'Quote approved — payment held'); }
+        if (action === 'counter') {
+          n.neg = { ...n.neg, turn: 'them', amount, history: [...n.neg.history, { by: 'customer', amount, ts: now(), note: 'You countered' }] };
+          n.status = 'vendor_talk';
+        }
+        if (action === 'cancel') { n.neg = null; n.status = 'cancelled'; }
+        return n;
+      }),
+    })),
+    driverAnswer: (orderId, action, amount) => setS((c) => ({
+      ...c, orders: c.orders.map((o) => {
+        if (o.id !== orderId) return o;
+        const n = { ...o, updated: now() };
+        if (action === 'accept') { n.fee = n.neg.amount; n.driver = n.neg.driver || DRIVER_NAMES[(n.driverIdx || 0) % 4]; n.neg = null; n.status = 'accepted'; pushAlert(c, 'Fare confirmed'); }
+        if (action === 'counter') {
+          n.neg = { ...n.neg, turn: 'them', amount, history: [...n.neg.history, { by: 'customer', amount, ts: now(), note: 'You countered' }] };
+          n.status = 'driver_talk';
+        }
+        if (action === 'refuse') { n.neg = null; n.driverIdx = (n.driverIdx || 0) + 1; n.status = 'finding_driver'; pushAlert(c, 'Offer refused — next courier'); }
+        return n;
+      }),
+    })),
+    offerAnswer: (orderId, action, amount) => setS((c) => ({
+      ...c, orders: c.orders.map((o) => {
+        if (o.id !== orderId) return o;
+        const n = { ...o, updated: now() };
+        if (action === 'accept') { n.neg = null; n.status = 'accepted'; }
+        if (action === 'refuse') { n.expired = true; n.neg = null; }
+        if (action === 'counter') {
+          n.neg = { ...n.neg, turn: 'them', amount,
+                    history: [...n.neg.history, { by: n.myRole, amount, ts: now(), note: 'Your counter' }] };
+        }
+        return n;
+      }),
+    })),
+    vendorQuote: (orderId, price, photoObj) => setS((c) => ({
+      ...c, orders: c.orders.map((o) => o.id !== orderId ? o : {
+        ...o, price, photos: { ...o.photos, product: photoObj }, updated: now(),
+        neg: { phase: 'vendor', turn: 'them', amount: price,
+               history: [...(o.neg ? o.neg.history : []), { by: 'vendor', amount: price, ts: now(), note: 'Your quote + product photo' }] },
+      }),
+    })),
+    vendorPacked: (orderId, photoObj) => setS((c) => ({
+      ...c, orders: c.orders.map((o) => o.id !== orderId ? o : { ...o, photos: { ...o.photos, packed: photoObj }, status: 'ready_pickup', updated: now() }),
+    })),
+    vendorHandover: (orderId) => setS((c) => ({
+      ...c, orders: c.orders.map((o) => o.id !== orderId ? o : { ...o, status: 'handover_done', updated: now() }),
+    })),
+    driverPickup: (orderId, photoObj) => setS((c) => ({
+      ...c, orders: c.orders.map((o) => o.id !== orderId ? o : { ...o, photos: { ...o.photos, pickup: photoObj }, status: 'picked_up', updated: now() }),
+    })),
+    driverDeliver: (orderId, photoObj) => setS((c) => ({
+      ...c, orders: c.orders.map((o) => o.id !== orderId ? o : { ...o, photos: { ...o.photos, delivery: photoObj }, status: 'delivered', updated: now() }),
+    })),
+    customerConfirm: (orderId) => setS((c) => {
+      const o = c.orders.find((x) => x.id === orderId);
+      const next = { ...c, orders: c.orders.map((x) => x.id !== orderId ? x : { ...x, status: 'completed', updated: now() }) };
+      if (o && o.paidHeld) { next.wallet = { ...next.wallet, tx: [{ id: uid(), amount: -(o.price + o.fee), kind: 'payment', orderId, ts: now() }, ...next.wallet.tx] }; }
+      pushAlert(next, 'Delivery confirmed — funds released');
+      return next;
+    }),
+    cancelOrder: (orderId) => setS((c) => ({
+      ...c, orders: c.orders.map((o) => o.id !== orderId ? o : { ...o, status: 'cancelled', updated: now() }),
+    })),
+    dispute: (orderId) => setS((c) => ({
+      ...c, orders: c.orders.map((o) => o.id !== orderId ? o : { ...o, status: 'disputed', updated: now() }),
+    })),
     adminDecideKyc: (id, ok) => setS((c) => {
       const next = { ...c };
       const k = c.kyc.find((x) => x.id === id);
@@ -413,9 +493,36 @@ export function StoreProvider({ children }) {
       return next;
     }),
     toggleOnline: (kind, v) => setS((c) => ({ ...c, [kind === 'driver' ? 'driverOnline' : 'storeOpen']: v })),
-    adminAdjustWallet: (userId, amount, reason) => setS((c) => ({
-      ...c, users: c.users.map((u) => u.id !== userId ? u : { ...u, wallet: Math.round((u.wallet + amount) * 100) / 100 }),
-    })),
+    adminAdjustWallet: (userId, amount, reason) => setS((c) => {
+      const next = { ...c, users: c.users.map((u) => u.id !== userId ? u : { ...u, wallet: Math.round((u.wallet + amount) * 100) / 100 }) };
+      audit(next, 'Wallet adjusted ' + (amount > 0 ? '+' : '') + amount, userId + ' — reason: ' + (reason || ''));
+      return next;
+    }),
+    // ---- V15 restore: admin order/user controls (V8 verbatim) ----
+    adminCancelRefund: (orderId) => setS((c) => {
+      const o = c.orders.find((x) => x.id === orderId);
+      const next = { ...c, orders: c.orders.map((x) => x.id !== orderId ? x : { ...x, status: 'cancelled', updated: now() }) };
+      if (o && o.paidHeld) { next.wallet = { ...next.wallet, balance: next.wallet.balance + o.price + o.fee,
+        tx: [{ id: uid(), amount: o.price + o.fee, kind: 'refund', orderId, ts: now() }, ...next.wallet.tx] }; }
+      audit(next, 'Order cancelled + refunded', orderId);
+      return next;
+    }),
+    adminReassign: (orderId) => setS((c) => {
+      const next = { ...c, orders: c.orders.map((x) => x.id !== orderId ? x : { ...x, status: 'finding_driver', neg: null, driverIdx: 0, updated: now() }) };
+      audit(next, 'Order reassigned', orderId); return next;
+    }),
+    adminFreeze: (userId, v) => setS((c) => {
+      const next = { ...c, users: c.users.map((u) => u.id !== userId ? u : { ...u, frozen: v }) };
+      audit(next, v ? 'User frozen' : 'User unfrozen', userId); return next;
+    }),
+    adminSetCommissions: (cm) => setS((c) => { const n = { ...c, settings: { ...c.settings, commissions: cm } };
+      audit(n, 'Commissions updated', JSON.stringify(cm)); return n; }),
+    adminSetSettings: (patch) => setS((c) => { const n = { ...c, settings: { ...c.settings, ...patch } };
+      audit(n, 'Settings updated', Object.keys(patch).join(',')); return n; }),
+    adminSetCategories: (cats) => setS((c) => { const n = { ...c, settings: { ...c.settings, categories: cats } };
+      audit(n, 'Categories updated', cats.join(', ')); return n; }),
+    adminSetBanner: (b) => setS((c) => { const n = { ...c, settings: { ...c.settings, banner: b } };
+      audit(n, 'Banner updated', b.title); return n; }),
     adminBroadcast: (text, target) => setS((c) => { const n = { ...c };
       n.alerts = [{ id: uid(), text: '📣 ' + text, ts: now(), read: false }, ...(c.alerts || [])].slice(0, 50);
       return n; }),
@@ -429,6 +536,23 @@ export function StoreProvider({ children }) {
           next.stores = (c.stores || []).map((s) => s.ownerId === 'me' ? { ...s, active: true, category: cat } : s);
         }
       }
+      return next;
+    }),
+    // V15 restore: store/driver registration — seeds a pending KYC entry and,
+    // for vendors, a paused store that goes live when the admin approves.
+    submitKyc: (role, data) => setS((c) => {
+      const entry = { id: uid(), userId: 'me', name: c.profile.name, role, status: 'pending', ts: now(), data };
+      const next = { ...c, roles: { ...c.roles, [role]: { status: 'pending', data } }, kyc: [entry, ...c.kyc] };
+      if (role === 'vendor') {
+        const cat = normCat(data.type || 'Sari-sari');
+        next.stores = [
+          { id: uid(), name: data.store || c.profile.name, category: cat,
+            area: data.area || '', address: data.address || '',
+            lat: null, lng: null, rating: 0, ownerId: 'me', active: false, createdAt: now() },
+          ...(c.stores || []),
+        ];
+      }
+      pushAlert(next, role === 'vendor' ? '🏪 Store submitted — pending admin review' : '🛵 Driver documents submitted — pending review');
       return next;
     }),
     resetAll: () => { AsyncStorage.removeItem(KEY); setS(DEFAULTS()); },

@@ -11,7 +11,7 @@ import { initPush } from './notifications';
 import { LangCtx, C } from './lib';
 import { StoreProvider, useStore } from './store';
 import { PhoneScreen, OtpScreen, TermsScreen } from './Auth';
-import { HomeScreen, OrderForm, OrdersTab, StoresByCategory, AddressesScreen } from './Customer';
+import { HomeScreen, OrderForm, OrdersTab, StoresByCategory, AddressesScreen, CartScreen } from './Customer';
 import Profile, { AlertsTab } from './Profile';
 import Driver from './Driver';
 import Vendor from './Vendor';
@@ -19,7 +19,7 @@ import Admin from './Admin';
 import BottomNav from './BottomNav';
 
 function Shell() {
-  const { s, signIn, agreeTerms } = useStore();
+  const { s, signIn, agreeTerms, placeCartOrder } = useStore();
   const [digits, setDigits] = useState('');
   const [step, setStep] = useState('phone'); // phone | otp
   const [tab, setTab] = useState('home');
@@ -27,6 +27,7 @@ function Shell() {
   const [preselect, setPreselect] = useState(null);
   const [preselectStore, setPreselectStore] = useState(null);
   const [storesCat, setStoresCat] = useState(null);
+  const [cartOpen, setCartOpen] = useState(false);
   const [addrOpen, setAddrOpen] = useState(false);
 
   if (!s.auth) {
@@ -47,10 +48,10 @@ function Shell() {
     ? (role === 'driver' ? <Driver /> : role === 'vendor' ? <Vendor />
        : <HomeScreen
            goNew={(c) => { setPreselect(c); setPreselectStore(null); setNewOpen(true); }}
-           goStores={(c) => { setStoresCat(c); }} />)
+           goStores={(c) => { setStoresCat(c); }} goCart={() => setCartOpen(true)} />)
     : tab === 'orders' ? <OrdersTab />
     : tab === 'alerts' ? <AlertsTab />
-    : <Profile />;
+    : <Profile onOpenAddresses={() => setAddrOpen(true)} />;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.paper }}>
@@ -60,6 +61,11 @@ function Shell() {
         if (role === 'customer') { setPreselect(null); setPreselectStore(null); setNewOpen(true); }
         else setTab('home');
       }} />
+      <Modal visible={cartOpen} animationType="slide" onRequestClose={() => setCartOpen(false)}>
+        <SafeAreaView style={{ flex: 1 }}>
+          <CartScreen onClose={() => setCartOpen(false)} onPlace={() => { placeCartOrder(s.auth?.phone, 'wallet'); setCartOpen(false); setTab('orders'); }} />
+        </SafeAreaView>
+      </Modal>
       <Modal visible={newOpen} animationType="slide" onRequestClose={() => setNewOpen(false)}>
         <SafeAreaView style={{ flex: 1 }}>
           <OrderForm preselect={preselect} preselectStore={preselectStore} onClose={() => setNewOpen(false)} />

@@ -292,12 +292,23 @@ export function OrderForm({ preselect, preselectStore, onClose }) {
   );
 }
 
-// V9: addresses screen wired to the new actions.
+// V15: addresses screen wired to the new actions — now with EDIT (the user's
+// report: addresses could be added but never edited/updated).
 export function AddressesScreen({ onClose }) {
-  const { s, addAddress, removeAddress, setDefaultAddress } = useStore();
+  const { s, addAddress, removeAddress, setDefaultAddress, updateAddress } = useStore();
   const [label, setLabel] = useState('New');
   const [addr, setAddr] = useState('');
   const [err, setErr] = useState('');
+  const [editId, setEditId] = useState(null);
+  const [editLabel, setEditLabel] = useState('');
+  const [editAddr, setEditAddr] = useState('');
+
+  const startEdit = (a) => { setEditId(a.id); setEditLabel(a.label); setEditAddr(a.addr); setErr(''); };
+  const saveEdit = () => {
+    if (!editAddr.trim()) { setErr('Address cannot be empty.'); return; }
+    updateAddress(editId, { label: editLabel.trim() || 'Saved', addr: editAddr.trim() });
+    setEditId(null); setEditLabel(''); setEditAddr('');
+  };
 
   const useCurrentLocation = async () => {
     setErr('');
@@ -328,17 +339,33 @@ export function AddressesScreen({ onClose }) {
       <ScrollView style={{ flex: 1, padding: 14 }}>
         {(s.addresses || []).map((a) => (
           <Card key={a.id} style={{ marginBottom: 10, borderColor: a.default ? C.green : C.line, borderWidth: a.default ? 2 : 1 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <View style={{ flex: 1 }}>
-                <Txt b s={15}>{a.label} {a.default ? '⭐ default' : ''}</Txt>
-                <Txt s={12} c={C.mute}>{a.addr}</Txt>
-                {a.lat && <Txt s={11} c={C.mute}>📡 {a.lat.toFixed(4)}, {a.lng.toFixed(4)}</Txt>}
+            {editId === a.id ? (
+              /* V15: inline edit mode */
+              <View>
+                <Txt b s={14}>✎ Editing “{a.label}”</Txt>
+                <Field value={editLabel} onChangeText={setEditLabel} placeholder="Label (Home, Office…)" style={{ marginTop: 8 }} />
+                <Field value={editAddr} onChangeText={setEditAddr} placeholder="Street, barangay, city" style={{ marginTop: 8 }} />
+                <View style={{ flexDirection: 'row', marginTop: 8 }}>
+                  <Btn small title="💾 Save changes" onPress={saveEdit} style={{ flex: 1, marginRight: 6 }} />
+                  <Btn small kind="ghost" title="Cancel" onPress={() => setEditId(null)} style={{ flex: 1 }} />
+                </View>
               </View>
-            </View>
-            <View style={{ flexDirection: 'row', marginTop: 6 }}>
-              {!a.default && <Btn small title="⭐ Set default" onPress={() => setDefaultAddress(a.id)} style={{ flex: 1, marginRight: 6 }} />}
-              <Btn small kind="bad" title="Remove" onPress={() => removeAddress(a.id)} style={{ flex: 1 }} />
-            </View>
+            ) : (
+              <View>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <View style={{ flex: 1 }}>
+                    <Txt b s={15}>{a.label} {a.default ? '⭐ default' : ''}</Txt>
+                    <Txt s={12} c={C.mute}>{a.addr}</Txt>
+                    {a.lat && <Txt s={11} c={C.mute}>📡 {a.lat.toFixed(4)}, {a.lng.toFixed(4)}</Txt>}
+                  </View>
+                </View>
+                <View style={{ flexDirection: 'row', marginTop: 6 }}>
+                  <Btn small kind="ghost" title="✎ Edit" onPress={() => startEdit(a)} style={{ flex: 1, marginRight: 6 }} />
+                  {!a.default && <Btn small title="⭐ Set default" onPress={() => setDefaultAddress(a.id)} style={{ flex: 1, marginRight: 6 }} />}
+                  <Btn small kind="bad" title="Remove" onPress={() => removeAddress(a.id)} style={{ flex: 1 }} />
+                </View>
+              </View>
+            )}
           </Card>
         ))}
         <Card style={{ marginTop: 4 }}>
