@@ -1,159 +1,92 @@
+// Vendor dashboard: incoming orders, quote with REQUIRED product photo, pack photo, handover, catalog, earnings
 import React, { useState } from 'react';
-import { Image, View } from 'react-native';
-import { C, Btn, Card, Field, Me, Screen, STATUS, TabBar, Txt, peso, pickPhoto, rpc, run, supabase, useLive, useT } from './lib';
+import { ScrollView, Switch, View } from 'react-native';
+import { C, ORDER_STATUS, peso } from './lib';
+import { useStore } from './store';
+import { Btn, Card, Field, Section, Txt } from './ui';
+import { PhotoTimeline, photoBubble } from './Customer';
 
-export default function Vendor({ profile, onSignOut }) {
-  const t = useT();
-  const [tab, setTab] = useState('orders');
+const mkPhoto = (kind) => ({ by: 'me', kind, ts: Date.now(), stamp: new Date().toLocaleString() + ' · GPS locked', simulated: true });
+
+export default function Vendor() {
+  const { s, vendorQuote, vendorPacked, vendorHandover, toggleOnline, catalogAdd, catalogDel, offerAnswer } = useStore();
+  const [price, setPrice] = useState({});
+  const [photoDone, setPhotoDone] = useState({});
+  const [newName, setNewName] = useState('');
+  const [newPrice, setNewPrice] = useState('');
+  const incoming = s.orders.filter((o) => !o.mine && o.myRole === 'vendor' && !o.expired && o.status !== 'completed' && o.status !== 'cancelled');
+  const done = s.orders.filter((o) => !o.mine && o.myRole === 'vendor' && o.status === 'completed');
+  const earnings = s.wallet.tx.filter((t) => t.kind === 'sale').reduce((a, t) => a + t.amount, 0);
+  const pct = s.settings.commissions.vendorPct;
   return (
-    <View style={{ flex: 1 }}>
-      {tab === 'orders' && <Orders />}
-      {tab === 'promos' && <Promos />}
-      {tab === 'store' && <StoreTab profile={profile} onSignOut={onSignOut} />}
-      <TabBar tabs={[['orders', t('Orders')], ['promos', t('Promos')], ['store', t('Store')]]} tab={tab} onTab={setTab} />
-    </View>
-  );
-}
-
-function Orders() {
-  const t = useT();
-  const [orders, reload] = useLive(async () => (await supabase.from('orders').select('*, order_items(*)').order('created_at', { ascending: false }).limit(40)).data || [], ['orders', 'order_items'], []);
-  const todo = (o) => ['pending_vendor', 'paid'].includes(o.status) ? 0 : 1;
-  return (
-    <Screen title={t('Orders')}>
-      {orders && orders.length === 0 ? <Txt c={C.mute}>No orders yet. New requests appear here instantly.</Txt> : null}
-      {(orders || []).slice().sort((a, b) => todo(a) - todo(b)).map((o) => <OrderCard key={o.id} o={o} reload={reload} />)}
-    </Screen>
-  );
-}
-
-// The store sets the price and sends a photo for every item - nothing is priced automatically.
-function OrderCard({ o, reload }) {
-  const [q, setQ] = useState({});
-  const [alt, setAlt] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const items = (o.order_items || []).filter((i) => !i.alt_of);
-  const set = (id, patch) => setQ({ ...q, [id]: { ...q[id], ...patch } });
-  const photo = (apply) => run(async () => { const u = await pickPhoto('photos', true); if (u) apply(u); });
-  const sendQuote = () => run(async () => {
-    const p_items = items.map((i) => { const x = q[i.id] || {}; return { id: i.id, available: !x.na, price: x.price ? Number(x.price) : null, photo: x.photo || null }; });
-    await rpc('vendor_quote', { p_order: o.id, p_items });
-    reload();
-  }, setBusy);
-  const sendAlt = () => run(async () => {
-    await rpc('vendor_alternative', { p_item: alt.item, p_name: alt.name, p_price: Number(alt.price), p_photo: alt.photo });
-    setAlt(null); reload();
-  }, setBusy);
-  return (
-    <Card>
-      <Txt b>{STATUS[o.status]}</Txt>
-      <Txt c={C.mute} style={{ marginBottom: 6 }}>{o.request}</Txt>
-
-      {o.status === 'pending_vendor' ? (
-        <>
-          {items.map((i) => {
-            const x = q[i.id] || {};
-            return (
-              <View key={i.id} style={{ marginBottom: 10 }}>
-                <Txt b>{i.qty}x {i.name}</Txt>
-                {x.na ? <Txt c={C.bad}>Marked as not available</Txt> : (
-                  <>
-                    <Field keyboardType="decimal-pad" placeholder="Price per item (₱)" value={x.price} onChangeText={(v) => set(i.id, { price: v })} />
-                    {x.photo ? <Image source={{ uri: x.photo }} style={{ height: 110, borderRadius: 10, marginBottom: 8 }} /> : null}
-                    <Btn kind="ghost" title={x.photo ? 'Retake photo' : 'Take a photo of the item'} onPress={() => photo((u) => set(i.id, { photo: u }))} />
-                  </>
-                )}
-                <Btn kind="ghost" title={x.na ? 'Mark available' : 'Out of stock'} onPress={() => set(i.id, { na: !x.na })} />
+    <ScrollView style={{ flex: 1, backgroundColor: C.paper, padding: 14 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+        <View style={{ flex: 1 }}>
+          <Txt b s={20}>🏪 Store board</Txt>
+          <Txt s={12} c={C.mute}>{incoming.length} live · earned {peso(earnings)} (after {pct}% fee)</Txt>
+        </View>
+        <View style={{ alignItems: 'center' }}>
+          <Txt s={11} c={C.mute}>Open</Txt>
+          <Switch value={!!s.storeOpen} onValueChange={(v) => toggleOnline('vendor', v)} trackColor={{ true: C.green }} />
+        </View>
+      </View>
+      {!s.storeOpen && <Card><Txt s={13} c={C.mute}>Your store is closed — open it to receive orders.</Txt></Card>}
+      {s.storeOpen && incoming.length === 0 && <Card><Txt s={13} c={C.mute}>Waiting for orders… (a bot order arrives within ~45s)</Txt></Card>}
+      {incoming.map((o) => (
+        <Card key={o.id} style={{ marginBottom: 12 }}>
+          <Txt b s={15}>{o.items}</Txt>
+          <Txt s={11} c={C.mute} style={{ marginTop: 4 }}>👤 {o.customer} · {ORDER_STATUS[o.status] || o.status} · fee {peso(o.fee)}</Txt>
+          <PhotoTimeline o={o} />
+          {o.status === 'vendor_quote' && (
+            <View style={{ marginTop: 10 }}>
+              <Btn small kind={photoDone[o.id] ? 'ghost' : 'main'}
+                   title={photoDone[o.id] ? '✓ Product photo attached' : '📷 Photo of the actual product (required)'}
+                   onPress={() => setPhotoDone({ ...photoDone, [o.id]: true })} />
+              {photoDone[o.id] && photoBubble(mkPhoto('product'))}
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
+                <Field value={price[o.id] || ''} onChangeText={(v) => setPrice({ ...price, [o.id]: v.replace(/[^0-9]/g, '') })}
+                       keyboardType="number-pad" placeholder="Your price ₱" style={{ flex: 1, padding: 10 }} />
+                <Btn small title="Send quote" disabled={!photoDone[o.id] || !price[o.id]}
+                     onPress={() => vendorQuote(o.id, Number(price[o.id]), mkPhoto('product'))}
+                     style={{ marginLeft: 8, marginTop: 0, paddingHorizontal: 14 }} />
               </View>
-            );
-          })}
-          <Btn title="Send quote to customer" onPress={sendQuote} busy={busy} />
-          <Btn kind="danger" title="Decline order" onPress={() => run(() => rpc('cancel_order', { p_order: o.id }))} />
-        </>
-      ) : null}
-
-      {o.status === 'quoted' ? (
-        <>
-          <Txt c={C.mute}>Waiting for the customer. You can offer a cheaper alternative for an item.</Txt>
-          {items.filter((i) => i.status === 'quoted').map((i) => (
-            <Btn key={i.id} kind="ghost" title={`Offer a cheaper alternative to ${i.name}`} onPress={() => setAlt({ item: i.id, name: '', price: '', photo: null })} />
-          ))}
-          {alt ? (
-            <View>
-              <Field placeholder="Alternative product" value={alt.name} onChangeText={(v) => setAlt({ ...alt, name: v })} />
-              <Field keyboardType="decimal-pad" placeholder="Price (₱)" value={alt.price} onChangeText={(v) => setAlt({ ...alt, price: v })} />
-              <Btn kind="ghost" title={alt.photo ? 'Photo added ✓' : 'Take a photo'} onPress={() => photo((u) => setAlt({ ...alt, photo: u }))} />
-              <Btn title="Send alternative" onPress={sendAlt} busy={busy} disabled={!alt.name || !alt.price || !alt.photo} />
             </View>
-          ) : null}
-        </>
-      ) : null}
-
-      {['finding_driver', 'awaiting_payment'].includes(o.status) ? <Txt c={C.mute}>Approved ({peso(o.items_total)}). Waiting for a shopper and payment.</Txt> : null}
-
-      {o.status === 'paid' ? (
-        o.vendor_handed ? <Txt c={C.green}>Handed over. Waiting for the shopper to confirm pickup.</Txt> : (
-          <>
-            <Txt>Payment is secured. Prepare the items for the shopper ({peso(o.items_total)}).</Txt>
-            <Btn title="Items handed to the shopper" onPress={() => run(async () => { await rpc('vendor_handover', { p_order: o.id }); reload(); }, setBusy)} busy={busy} />
-            <Btn kind="danger" title="Cannot fulfil - cancel and refund" onPress={() => run(() => rpc('cancel_order', { p_order: o.id }))} />
-          </>
-        )
-      ) : null}
-    </Card>
-  );
-}
-
-function Promos() {
-  const t = useT();
-  const [title, setTitle] = useState('');
-  const [body, setBody] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [list, reload] = useLive(async () => {
-    const { data: v } = await supabase.from('vendors').select('id').maybeSingle();
-    if (!v) return { vendor: null, rows: [] };
-    return { vendor: v.id, rows: (await supabase.from('promos').select('*').eq('vendor_id', v.id).order('created_at', { ascending: false })).data || [] };
-  }, ['promos'], []);
-  const add = () => run(async () => {
-    const { error } = await supabase.from('promos').insert({ vendor_id: list.vendor, title: title.trim(), body: body.trim() });
-    if (error) throw error;
-    setTitle(''); setBody(''); reload();
-  }, setBusy);
-  return (
-    <Screen title={t('Promos')}>
-      <Card>
-        <Txt b style={{ marginBottom: 6 }}>New promo (shown on the customer home banner)</Txt>
-        <Field placeholder="Title, e.g. Free ice with 6 sodas" value={title} onChangeText={setTitle} />
-        <Field placeholder="Details" value={body} onChangeText={setBody} />
-        <Btn title="Publish promo" onPress={add} busy={busy} disabled={!title.trim() || !list || !list.vendor} />
-      </Card>
-      {((list && list.rows) || []).map((p) => (
-        <Card key={p.id}>
-          <Txt b>{p.title}</Txt>
-          <Txt c={C.mute}>{p.body}</Txt>
-          <Btn kind="ghost" title={p.active ? 'Stop promo' : 'Restart promo'} onPress={() => run(async () => { await supabase.from('promos').update({ active: !p.active }).eq('id', p.id); reload(); })} />
+          )}
+          {o.neg && o.neg.turn === 'me' && o.status !== 'vendor_quote' && (
+            <View style={{ marginTop: 8 }}>
+              <Txt s={12} c={C.amber}>💬 Customer countered: {peso(o.neg.amount)}</Txt>
+              <View style={{ flexDirection: 'row', marginTop: 6 }}>
+                <Btn small title="Accept" onPress={() => offerAnswer(o.id, 'accept')} style={{ flex: 1, marginRight: 6 }} />
+                <Btn small kind="ghost" title="Counter" onPress={() => offerAnswer(o.id, 'counter', Math.round(o.neg.amount * 1.1))} style={{ flex: 1, marginRight: 6 }} />
+                <Btn small kind="bad" title="Refuse" onPress={() => offerAnswer(o.id, 'refuse')} style={{ flex: 1 }} />
+              </View>
+            </View>
+          )}
+          {o.status === 'awaiting_pack' && <Btn small title="📷 Order packed — take photo" onPress={() => vendorPacked(o.id, mkPhoto('packed'))} />}
+          {o.status === 'ready_pickup' && <Btn small title="🤝 Hand over to courier" onPress={() => vendorHandover(o.id)} />}
+          {(o.status === 'picked_up' || o.status === 'delivered' || o.status === 'handover_done') &&
+            ['product', 'packed'].map((k) => o.photos[k] ? <View key={k}>{photoBubble(o.photos[k])}</View> : null)}
         </Card>
       ))}
-    </Screen>
-  );
-}
 
-function StoreTab({ profile, onSignOut }) {
-  const t = useT();
-  const [d, reload] = useLive(async () => ({
-    v: (await supabase.from('vendors').select('*').maybeSingle()).data,
-    w: (await supabase.from('wallets').select('balance').maybeSingle()).data,
-  }), ['vendors', 'wallets'], []);
-  return (
-    <Me profile={profile} onSignOut={onSignOut}>
-      {d && d.v ? (
-        <Card>
-          <Txt b>{d.v.name}</Txt>
-          <Txt c={d.v.is_open ? C.green : C.bad} style={{ marginBottom: 8 }}>{d.v.is_open ? 'Open for orders' : 'Closed'}</Txt>
-          <Btn kind="ghost" title={d.v.is_open ? 'Close the store' : 'Open the store'} onPress={() => run(async () => { await rpc('vendor_set_open', { p_open: !d.v.is_open }); reload(); })} />
-          <Txt>{t('Wallet')}: {peso(d.w && d.w.balance)}</Txt>
-        </Card>
-      ) : null}
-    </Me>
+      <Section title="📦 My products">
+        {(s.catalog || []).map((p) => (
+          <Card key={p.id} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, paddingVertical: 10 }}>
+            <Txt s={14} style={{ flex: 1 }}>{p.name}</Txt>
+            <Txt b s={14} c={C.green}>{peso(p.price)}</Txt>
+            <Btn small kind="bad" title="✕" onPress={() => catalogDel(p.id)} style={{ marginLeft: 10, marginTop: 0, paddingHorizontal: 10 }} />
+          </Card>
+        ))}
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Field value={newName} onChangeText={setNewName} placeholder="Product name" style={{ flex: 2, padding: 10 }} />
+          <Field value={newPrice} onChangeText={(v) => setNewPrice(v.replace(/[^0-9]/g, ''))} keyboardType="number-pad"
+                 placeholder="₱" style={{ flex: 1, marginLeft: 8, padding: 10 }} />
+          <Btn small title="Add" disabled={!newName || !newPrice}
+               onPress={() => { catalogAdd(newName, Number(newPrice)); setNewName(''); setNewPrice(''); }}
+               style={{ marginLeft: 8, marginTop: 0, paddingHorizontal: 16 }} />
+        </View>
+      </Section>
+      <View style={{ height: 100 }} />
+    </ScrollView>
   );
 }

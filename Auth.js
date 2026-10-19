@@ -1,145 +1,144 @@
-import React, { useState } from 'react';
-import { Alert, ScrollView, View } from 'react-native';
-import { C, Btn, Card, Chip, Field, Txt, getPos, pickPhoto, rpc, run, supabase, useT } from './lib';
+// Pabili PH — Auth screens: Login (green hero), OTP (4 boxes + timer), Terms consent.
+// Matches the reference screenshots exactly (same layout/colors), localized en/tl.
+import React, { useEffect, useRef, useState } from 'react';
+import { Alert, Image, Pressable, View } from 'react-native';
+import { ADMIN_CODE, ADMIN_PHONE, isAdminPhone, normalizePhone, useT, validPhone, USER_TEST_CODE } from './lib';
+import { Btn, Card, Field, Txt } from './ui';
 
-export function PhoneScreen() {
-  const [step, setStep] = useState('phone');
+// ---------- 1) LOGIN (reference: full green hero + bottom white card) ----------
+export function PhoneScreen({ onDone }) {
+  const T = useT();
   const [num, setNum] = useState('');
-  const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
-  const digits = num.replace(/\D/g, '').replace(/^0/, '');
-  const phone = '+63' + digits;
-  const isAdmin = digits === '562989152'; // admin test login: 0562989152 / 1785
-  const TEST_CODE = '1234'; // TESTING ONLY: any valid number + 1234 signs in (SMS not yet enabled). Remove before launch.
-  const send = () => run(async () => {
-    if (isAdmin) { setStep('code'); return; } // no SMS for the admin test account
-    if (digits.length !== 10) throw new Error('Enter your 10-digit mobile number, e.g. 917 123 4567.');
-    // TESTING ONLY: skip the SMS call (phone provider not enabled) and go straight to the code screen.
-    // When a real SMS provider is configured, uncomment the two lines below and remove setStep('code'):
-    // const { error } = await supabase.auth.signInWithOtp({ phone });
-    // if (error) throw error;
-    setStep('code');
-  }, setBusy);
-  const verify = () => run(async () => {
-    if (isAdmin) {
-      if (code.trim() !== '1785') throw new Error('Wrong code.');
-      const { error: e1 } = await supabase.auth.signInAnonymously();
-      if (e1) throw e1;
-      await rpc('admin_login', { p_phone: '0562989152', p_code: '1785' });
-      return; // onAuthStateChange in App.js routes to the admin dashboard
+  const digits = normalizePhone(num);
+
+  const send = () => {
+    if (!validPhone(digits)) {
+      Alert.alert(T('login'), 'Enter your 10-digit mobile number, e.g. 917 123 4567.');
+      return;
     }
-    // TESTING ONLY: accept the fixed code 1234 for everyone, then create an
-    // anonymous session and stamp the entered phone on the profile.
-    if (code.trim() === TEST_CODE) {
-      const { error: e2 } = await supabase.auth.signInAnonymously();
-      if (e2) throw e2;
-      await supabase.from('profiles').upsert({ id: (await supabase.auth.getUser()).data.user.id, phone });
-      return; // onAuthStateChange routes to RolePicker / the app
-    }
-    throw new Error('Wrong code. For testing use 1234.');
-  }, setBusy);
+    setBusy(true);
+    // Stage 1: no network. Stage 2: signInWithOtp here (admin bypasses SMS).
+    setTimeout(() => { setBusy(false); onDone(digits); }, 350);
+  };
+
   return (
-    <View style={{ flex: 1, justifyContent: 'center', padding: 24, backgroundColor: C.green }}>
-      <Txt s={34} b c="#fff">Pabili</Txt>
-      <Txt c="#fff" style={{ marginBottom: 28 }}>Any item, any store, any time.</Txt>
-      <Card>
-        {step === 'phone' ? (
-          <>
-            <Txt b style={{ marginBottom: 8 }}>Mobile number (+63)</Txt>
-            <Field keyboardType="phone-pad" value={num} onChangeText={setNum} placeholder="917 123 4567" />
-            <Btn title="Send code" onPress={send} busy={busy} />
-          </>
-        ) : (
-          <>
-            <Txt b style={{ marginBottom: 8 }}>Enter the code sent to {phone}</Txt>
-            <Field keyboardType="number-pad" value={code} onChangeText={setCode} placeholder="123456" />
-            <Btn title="Verify" onPress={verify} busy={busy} />
-            <Btn kind="ghost" title="Change number" onPress={() => setStep('phone')} />
-          </>
-        )}
-      </Card>
-      <Txt s={12} c="#fff">By using this app you agree to our Terms of Use.</Txt>
+    <View style={{ flex: 1, backgroundColor: '#0E7C5B' }}>
+      {/* hero ~65% */}
+      <View style={{ flex: 1.8, alignItems: 'center', justifyContent: 'center' }}>
+        <View style={{ position: 'absolute', top: 14, left: 14, width: 30, height: 30, borderRadius: 15,
+                       backgroundColor: 'rgba(255,255,255,0.9)', alignItems: 'center', justifyContent: 'center' }}>
+          <Txt b c="#0E7C5B" s={16}>?</Txt>
+        </View>
+        {/* brand mark: approved logo lockup on white card (brand sheet 2026-10-19) */}
+        <View style={{ alignItems: 'center' }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 26, paddingVertical: 12, paddingHorizontal: 20 }}>
+            <Image source={require('./assets/logo-lockup.png')} style={{ width: 216, height: 144 }} resizeMode="contain" />
+          </View>
+          <Txt c="#fff" s={13} style={{ opacity: 0.92, marginTop: 12 }}>Any item, any store, any time.</Txt>
+        </View>
+      </View>
+      {/* bottom sheet ~35% */}
+      <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 22 }}>
+        <Txt b s={20}>{T('login')}</Txt>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 14, borderWidth: 1,
+                       borderColor: '#DCE5DF', borderRadius: 14, paddingHorizontal: 12 }}>
+          <Txt b s={15}>🇵🇭 +63</Txt>
+          <Field value={num} onChangeText={setNum} keyboardType="phone-pad" maxLength={11}
+                 placeholder={T('phonePh')}
+                 style={{ flex: 1, borderWidth: 0, marginLeft: 8, backgroundColor: 'transparent' }} />
+        </View>
+        <Btn title={T('sendCode')} onPress={send} busy={busy} />
+        <Txt c="#0E7C5B" s={13} style={{ textAlign: 'center', marginTop: 14 }}>{T('social')}</Txt>
+        <Txt c="#6B7A72" s={11} style={{ textAlign: 'center', marginTop: 16 }}>{T('termsNote')}</Txt>
+        <Txt c="#B9C4BE" s={10} style={{ textAlign: 'center', marginTop: 6 }}>{T('testHint')}</Txt>
+      </View>
     </View>
   );
 }
 
-export function RolePicker({ onDone }) {
-  const locked = process.env.EXPO_PUBLIC_APP_ROLE; // set to customer | driver | vendor to ship three separate apps from this code
-  const [name, setName] = useState('');
-  const [busy, setBusy] = useState(false);
-  const roles = [['customer', 'Customer - order anything'], ['driver', 'Shopper - earn per delivery'], ['vendor', 'Store - receive orders']]
-    .filter(([k]) => !locked || k === locked);
-  const pick = (role) => run(async () => {
-    if (!name.trim()) throw new Error('Enter your name first.');
-    await rpc('set_role', { p_role: role, p_name: name.trim() });
-    onDone();
-  }, setBusy);
+// ---------- 2) OTP (reference: 4 green boxes + 01:30 resend timer) ----------
+export function OtpScreen({ digits, onVerified, onBack }) {
+  const T = useT();
+  const [code, setCode] = useState(['', '', '', '']);
+  const [secs, setSecs] = useState(90);
+  const refs = [useRef(), useRef(), useRef(), useRef()];
+  const admin = isAdminPhone(digits);
+  const expected = admin ? ADMIN_CODE : USER_TEST_CODE;
+
+  useEffect(() => {
+    const t = setInterval(() => setSecs((s) => (s > 0 ? s - 1 : 0)), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const put = (i, v) => {
+    const c = normalizePhone(v).slice(-1);
+    const next = [...code]; next[i] = c; setCode(next);
+    if (c && i < 3) refs[i + 1].current && refs[i + 1].current.focus();
+  };
+
+  const verify = () => {
+    const entered = code.join('');
+    if (entered.length < 4) return;
+    if (entered !== expected) {
+      Alert.alert('Wrong code', admin ? 'Wrong admin code.' : `Wrong code. For testing use ${USER_TEST_CODE}.`);
+      return;
+    }
+    onVerified({ phone: '+63' + digits, role: admin ? 'admin' : null, verified: true });
+  };
+
   return (
-    <View style={{ flex: 1, justifyContent: 'center', padding: 24 }}>
-      <Txt s={24} b style={{ marginBottom: 12 }}>Account type</Txt>
-      <Field value={name} onChangeText={setName} placeholder="Your name" />
-      {roles.map(([k, label]) => <Btn key={k} title={label} onPress={() => pick(k)} busy={busy} />)}
+    <View style={{ flex: 1, backgroundColor: '#fff', padding: 22 }}>
+      <Pressable onPress={onBack} style={{ alignSelf: 'flex-end', padding: 6 }}><Txt s={22} c="#17231E">›</Txt></Pressable>
+      <Txt b s={22} style={{ textAlign: 'center', marginTop: 30 }}>{T('otpTitle')}</Txt>
+      <Txt c="#6B7A72" s={13} style={{ textAlign: 'center', marginTop: 8 }}>
+        {T('otpSub')} <Txt b c="#0E7C5B">+63{digits}</Txt>
+      </Txt>
+      <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 28 }}>
+        {code.map((v, i) => (
+          <Field key={i} ref={refs[i]} value={v} onChangeText={(t) => put(i, t)} keyboardType="number-pad"
+                 maxLength={1} style={{ width: 56, height: 60, marginHorizontal: 6, textAlign: 'center',
+                 fontSize: 24, fontWeight: '800', borderColor: v ? '#0E7C5B' : '#DCE5DF', borderWidth: 1.5 }} />
+        ))}
+      </View>
+      <Txt c="#6B7A72" s={13} style={{ textAlign: 'center', marginTop: 26 }}>
+        {secs > 0 ? `${T('resendIn')} 0${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`
+                  : <Txt c="#0E7C5B" b onPress={() => setSecs(90)}>{T('resend')}</Txt>}
+      </Txt>
+      <Btn title={T('verify')} onPress={verify} disabled={code.join('').length < 4} />
+      <Txt c="#B9C4BE" s={11} style={{ textAlign: 'center', marginTop: 60 }}>{T('safeNote')}</Txt>
     </View>
   );
 }
 
-// Registration + documents for drivers and stores. A human approves the request (see README).
-export function KycForm({ role, rejected, onDone }) {
-  const t = useT();
-  const isV = role === 'vendor';
-  const [f, setF] = useState({ category: 'sari_sari', vehicle_type: 'Motorcycle' });
-  const [docs, setDocs] = useState([]);
-  const [busy, setBusy] = useState(false);
-  const set = (k) => (v) => setF({ ...f, [k]: v });
-  const addDoc = (camera) => run(async () => { const p = await pickPhoto('kyc', camera); if (p) setDocs([...docs, p]); });
-  const here = () => run(async () => { const p = await getPos(); setF({ ...f, lat: p.lat, lng: p.lng }); });
-  const submit = () => run(async () => {
-    if (isV && (!f.name || !f.address || !f.phone)) throw new Error('Fill in the store name, address and phone.');
-    if (!isV && (!f.vehicle_model || !f.plate)) throw new Error('Fill in the vehicle model and plate number.');
-    if (isV && f.lat == null) throw new Error('Tap "I am at the store" to set the store location.');
-    if (docs.length < 2) throw new Error(isV ? 'Upload the business license and a storefront photo.' : "Upload your driver's license and a clear selfie.");
-    await rpc('submit_kyc', { p_data: f, p_docs: docs });
-    onDone();
-  }, setBusy);
-  return (
-    <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 50 }}>
-      <Txt s={22} b>{isV ? 'Tell us about your store' : 'Enter your vehicle and license'}</Txt>
-      <Txt c={C.mute} style={{ marginBottom: 14 }}>We verify shoppers' identity and stores' licenses. Your documents are never shown to customers.</Txt>
-      {rejected ? <Txt c={C.bad} style={{ marginBottom: 10 }}>Your last request was not approved. Please check the details and send again.</Txt> : null}
-      {isV ? (
-        <>
-          <Field placeholder="Store name" value={f.name} onChangeText={set('name')} />
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-            {[['sari_sari', 'Sari-sari stores'], ['grocery', 'Grocery'], ['restaurant', 'Restaurants']].map(([k, l]) => <Chip key={k} label={t(l)} on={f.category === k} onPress={() => set('category')(k)} />)}
-          </View>
-          <Field placeholder="Store address" value={f.address} onChangeText={set('address')} />
-          <Field placeholder="Store phone" keyboardType="phone-pad" value={f.phone} onChangeText={set('phone')} />
-          <Btn kind="ghost" title={f.lat != null ? 'Location saved ✓' : 'I am at the store (save location)'} onPress={here} />
-        </>
-      ) : (
-        <>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-            {['Motorcycle', 'Bicycle', 'Walking'].map((v) => <Chip key={v} label={v} on={f.vehicle_type === v} onPress={() => set('vehicle_type')(v)} />)}
-          </View>
-          <Field placeholder="Vehicle model" value={f.vehicle_model} onChangeText={set('vehicle_model')} />
-          <Field placeholder="Plate number" autoCapitalize="characters" value={f.plate} onChangeText={set('plate')} />
-        </>
-      )}
-      <Txt b style={{ marginVertical: 8 }}>Documents ({docs.length}/2+)</Txt>
-      <Btn kind="ghost" title={isV ? 'Photo: business license / storefront' : "Photo: license / selfie"} onPress={() => addDoc(true)} />
-      <Btn kind="ghost" title="Choose from gallery" onPress={() => addDoc(false)} />
-      <Btn title="Send for review" onPress={submit} busy={busy} />
-    </ScrollView>
+// ---------- 3) TERMS (reference: white card, 2 green checkboxes, wide agree) ----------
+export function TermsScreen({ onAgree }) {
+  const T = useT();
+  const [c1, setC1] = useState(false);
+  const [c2, setC2] = useState(false);
+  const Box = ({ on, label }) => (
+    <Pressable onPress={() => (label === T('tC1') ? setC1(!c1) : setC2(!c2))}
+      style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
+      <View style={{ width: 22, height: 22, borderRadius: 6, borderWidth: 1.5, marginRight: 12,
+                     borderColor: '#0E7C5B', backgroundColor: on ? '#0E7C5B' : '#fff',
+                     alignItems: 'center', justifyContent: 'center' }}>
+        {on && <Txt c="#fff" b s={13}>✓</Txt>}
+      </View>
+      <Txt s={13} style={{ flex: 1 }}>{label}</Txt>
+    </Pressable>
   );
-}
-
-export function Pending({ onRefresh, onSignOut }) {
   return (
-    <View style={{ flex: 1, justifyContent: 'center', padding: 24 }}>
-      <Txt s={22} b>Your account is under review</Txt>
-      <Txt c={C.mute} style={{ marginVertical: 12 }}>We will unlock your account as soon as your documents are approved. Tap refresh to check.</Txt>
-      <Btn title="Refresh" onPress={onRefresh} />
-      <Btn kind="ghost" title="Log out" onPress={onSignOut} />
+    <View style={{ flex: 1, backgroundColor: '#fff', padding: 24, justifyContent: 'space-between' }}>
+      <View style={{ alignItems: 'center', marginTop: 60 }}>
+        <Image source={require('./assets/icon.png')} style={{ width: 74, height: 74, borderRadius: 20, marginBottom: 26 }} />
+        <Txt b s={20} style={{ textAlign: 'center' }}>{T('tTitle')}</Txt>
+        <Txt c="#6B7A72" s={13} style={{ textAlign: 'center', marginTop: 14, lineHeight: 20 }}>{T('tBody')}</Txt>
+      </View>
+      <View>
+        <Box on={c1} label={T('tC1')} />
+        <Box on={c2} label={T('tC2')} />
+        <Btn title={T('agree')} onPress={onAgree} disabled={!c1} />
+      </View>
     </View>
   );
 }

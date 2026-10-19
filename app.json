@@ -1,16 +1,50 @@
 {
   "expo": {
-    "name": "Pabili", "slug": "pabili", "version": "2.0.0", "orientation": "portrait",
-    "userInterfaceStyle": "light", "platforms": ["android", "ios"],
-    "splash": { "backgroundColor": "#0E7C5B", "resizeMode": "contain" },
+    "name": "Pabili",
+    "slug": "pabili-ph",
+    "version": "1.2.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "platforms": ["android"],
+    "icon": "./assets/icon.png",
+    "notification": {
+      "icon": "./assets/notification-icon.png",
+      "color": "#0E7C5B"
+    },
+    "splash": {
+      "image": "./assets/splash.png",
+      "backgroundColor": "#0E7C5B",
+      "resizeMode": "contain"
+    },
     "android": {
-      "package": "com.pabili.delivery", "versionCode": 2,
-      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "CAMERA"],
-      "config": { "googleMaps": { "apiKey": "YOUR_GOOGLE_MAPS_API_KEY" } }
+      "package": "com.pabili.ph",
+      "versionCode": 5,
+      "permissions": [
+        "INTERNET",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
+      ],
+      "config": {
+        "googleMaps": {
+          "apiKey": "REPLACE_WITH_YOUR_GOOGLE_MAPS_API_KEY"
+        },
+        "location": {
+          "androidMode": "highAccuracy"
+        }
+      },
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0E7C5B"
+      }
     },
     "plugins": [
-      ["expo-location", { "locationWhenInUsePermission": "Pabili uses your location to find stores and shoppers near you." }],
-      ["expo-image-picker", { "photosPermission": "Choose photos for your documents.", "cameraPermission": "Take photos of items and documents." }]
+      "expo-font",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow Pabili to use your location to assign the right courier and show nearby stores."
+        }
+      ]
     ]
   }
 }

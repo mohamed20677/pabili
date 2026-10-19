@@ -1,73 +1,101 @@
-import 'react-native-url-polyfill/auto';
-import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, View } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { StatusBar } from 'expo-status-bar';
+// Pabili PH — full app shell: auth flow → role-based experience
+// V8: Store picker step (after tapping a category chip) → StoresByCategory list →
+// tapping a store routes into OrderForm with that store pre-selected.
+import React, { useState } from 'react';
+import { Modal, SafeAreaView, StatusBar, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { C, LangCtx, Txt, supabase } from './lib';
-import { KycForm, Pending, PhoneScreen, RolePicker } from './Auth';
-import Customer from './Customer';
-import Vendor from './Vendor';
+import { useFonts } from 'expo-font';
+import { Nunito_400Regular, Nunito_700Bold } from '@expo-google-fonts/nunito';
+import { wireSupabaseSession, SUPABASE_ENABLED } from './supabase';
+import { initPush } from './notifications';
+import { LangCtx, C } from './lib';
+import { StoreProvider, useStore } from './store';
+import { PhoneScreen, OtpScreen, TermsScreen } from './Auth';
+import { HomeScreen, OrderForm, OrdersTab, StoresByCategory, AddressesScreen } from './Customer';
+import Profile, { AlertsTab } from './Profile';
 import Driver from './Driver';
+import Vendor from './Vendor';
 import Admin from './Admin';
+import BottomNav from './BottomNav';
 
-export default function App() {
-  const [lang, setLangState] = useState('en');
-  const [session, setSession] = useState(undefined);
-  const [state, setState] = useState(null);
-  const setLang = (l) => { setLangState(l); AsyncStorage.setItem('pabili.lang', l); };
+function Shell() {
+  const { s, signIn, agreeTerms } = useStore();
+  const [digits, setDigits] = useState('');
+  const [step, setStep] = useState('phone'); // phone | otp
+  const [tab, setTab] = useState('home');
+  const [newOpen, setNewOpen] = useState(false);
+  const [preselect, setPreselect] = useState(null);
+  const [preselectStore, setPreselectStore] = useState(null);
+  const [storesCat, setStoresCat] = useState(null);
+  const [addrOpen, setAddrOpen] = useState(false);
 
-  const load = useCallback(async (uid) => {
-    if (!uid) { setState(null); return; }
-    const { data: profile } = await supabase.from('profiles').select('*').eq('id', uid).maybeSingle();
-    let kyc = null;
-    if (profile && (profile.role === 'driver' || profile.role === 'vendor')) {
-      const q = profile.role === 'vendor'
-        ? supabase.from('vendors').select('verified').eq('owner_id', uid)
-        : supabase.from('drivers').select('verified').eq('user_id', uid);
-      const { data: row } = await q.maybeSingle();
-      const { data: k } = await supabase.from('kyc_requests').select('status').order('created_at', { ascending: false }).limit(1).maybeSingle();
-      kyc = { submitted: !!row && !!k, verified: !!(row && row.verified), last: k && k.status };
-    }
-    setState({ profile, kyc });
-  }, []);
-
-  useEffect(() => {
-    AsyncStorage.getItem('pabili.lang').then((v) => { if (v) setLangState(v); });
-    supabase.auth.getSession().then(({ data }) => { setSession(data.session); load(data.session && data.session.user.id); });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => { setSession(s); load(s && s.user.id); });
-    return () => sub.subscription.unsubscribe();
-  }, [load]);
-
-  const signOut = () => supabase.auth.signOut();
-  const refresh = () => load(session && session.user.id);
-
-  let body;
-  if (!process.env.EXPO_PUBLIC_SUPABASE_URL || !process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY) {
-    body = <View style={{ flex: 1, justifyContent: 'center', padding: 24 }}><Txt b s={18}>Setup needed</Txt><Txt>Add EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY to the .env file, then rebuild.</Txt></View>;
-  } else if (session === undefined || (session && !state)) {
-    body = <View style={{ flex: 1, justifyContent: 'center' }}><ActivityIndicator color={C.green} size="large" /></View>;
-  } else if (!session) {
-    body = <PhoneScreen />;
-  } else {
-    const { profile, kyc } = state;
-    if (!profile || !profile.role) body = <RolePicker onDone={refresh} />;
-    else if (kyc && !kyc.verified) {
-      body = !kyc.submitted || kyc.last === 'rejected'
-        ? <KycForm role={profile.role} rejected={kyc.last === 'rejected'} onDone={refresh} />
-        : <Pending onRefresh={refresh} onSignOut={signOut} />;
-    } else if (profile.role === 'admin') body = <Admin profile={profile} onSignOut={signOut} />;
-    else if (profile.role === 'vendor') body = <Vendor profile={profile} onSignOut={signOut} />;
-    else if (profile.role === 'driver') body = <Driver profile={profile} onSignOut={signOut} />;
-    else body = <Customer profile={profile} onSignOut={signOut} />;
+  if (!s.auth) {
+    return (
+      <View style={{ flex: 1 }}>
+        <StatusBar barStyle="light-content" />
+        {step === 'phone'
+          ? <PhoneScreen onDone={(d) => { setDigits(d); setStep('otp'); }} />
+          : <OtpScreen digits={digits} onVerified={signIn} onBack={() => setStep('phone')} />}
+      </View>
+    );
   }
+  if (!s.terms) return <TermsScreen onAgree={agreeTerms} />;
+  if (s.auth.role === 'admin') return <Admin />;
+
+  const role = s.activeRole;
+  const main = tab === 'home'
+    ? (role === 'driver' ? <Driver /> : role === 'vendor' ? <Vendor />
+       : <HomeScreen
+           goNew={(c) => { setPreselect(c); setPreselectStore(null); setNewOpen(true); }}
+           goStores={(c) => { setStoresCat(c); }} />)
+    : tab === 'orders' ? <OrdersTab />
+    : tab === 'alerts' ? <AlertsTab />
+    : <Profile />;
 
   return (
-    <SafeAreaProvider>
-      <LangCtx.Provider value={{ lang, setLang }}>
-        <StatusBar style="dark" />
-        <SafeAreaView style={{ flex: 1, backgroundColor: C.paper }}>{body}</SafeAreaView>
-      </LangCtx.Provider>
-    </SafeAreaProvider>
+    <SafeAreaView style={{ flex: 1, backgroundColor: C.paper }}>
+      <StatusBar barStyle="dark-content" />
+      <View style={{ flex: 1 }}>{main}</View>
+      <BottomNav tab={tab} setTab={setTab} alerts={s.alerts} onFab={() => {
+        if (role === 'customer') { setPreselect(null); setPreselectStore(null); setNewOpen(true); }
+        else setTab('home');
+      }} />
+      <Modal visible={newOpen} animationType="slide" onRequestClose={() => setNewOpen(false)}>
+        <SafeAreaView style={{ flex: 1 }}>
+          <OrderForm preselect={preselect} preselectStore={preselectStore} onClose={() => setNewOpen(false)} />
+        </SafeAreaView>
+      </Modal>
+      <Modal visible={!!storesCat} animationType="slide" onRequestClose={() => setStoresCat(null)}>
+        <SafeAreaView style={{ flex: 1 }}>
+          <StoresByCategory category={storesCat} onBack={() => setStoresCat(null)}
+            onPick={(s) => { setStoresCat(null); setPreselect(null); setPreselectStore(s); setNewOpen(true); }} />
+        </SafeAreaView>
+      </Modal>
+      <Modal visible={addrOpen} animationType="slide" onRequestClose={() => setAddrOpen(false)}>
+        <SafeAreaView style={{ flex: 1 }}>
+          <AddressesScreen onClose={() => setAddrOpen(false)} />
+        </SafeAreaView>
+      </Modal>
+    </SafeAreaView>
+  );
+}
+
+export default function App() {
+  const [fontsLoaded] = useFonts({ 'Nunito-Regular': Nunito_400Regular, 'Nunito-Bold': Nunito_700Bold });
+  const [lang, setLangState] = useState('en');
+  const setLang = (l) => { setLangState(l); AsyncStorage.setItem('pabili.lang', l); };
+
+  React.useEffect(() => {
+    wireSupabaseSession().catch(() => {});
+    if (SUPABASE_ENABLED) initPush().catch(() => {});
+  }, []);
+
+  if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: '#0E7C5B' }} />;
+  return (
+    <LangCtx.Provider value={{ lang, setLang }}>
+      <StoreProvider>
+        <Shell />
+      </StoreProvider>
+    </LangCtx.Provider>
   );
 }
