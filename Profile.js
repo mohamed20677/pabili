@@ -4,12 +4,15 @@
 // these were stubbed out in V9–V14 builds; that is the regression the user hit.
 // V9 grafts kept: WithdrawScreen (PH rails), saved-addresses with default flag.
 import React, { useState } from 'react';
-import { Modal, Pressable, ScrollView, View } from 'react-native';
+import { Alert, Image, Modal, Pressable, SafeAreaView, ScrollView, View } from 'react-native';
 import { C, CATEGORIES, LangCtx, peso, useT, WITHDRAWAL_PROVIDERS } from './lib';
 import { useStore } from './store';
 import { Btn, Card, Field, Row, Section, Txt } from './ui';
+import { BUCKETS, takeDocPhoto } from './media';
+import { saveProfileRemote } from './api';
 
-const mkDoc = (name) => name;
+// which Storage bucket each KYC document goes to
+const DOC_BUCKET = { license: BUCKETS.license, selfie: BUCKETS.selfie, permit: BUCKETS.store, front: BUCKETS.store };
 
 // -------- reusable category picker (same source as app service menus) --------
 function CategoryPicker({ value, onPick }) {
@@ -130,17 +133,28 @@ function RoleDialog({ visible, onClose, onPick }) {
 }
 
 function KycForm({ role, onDone }) {
-  const { submitKyc } = useStore();
+  const { submitKyc, s } = useStore();
+  const [upl, setUpl] = useState(null);
   const isDriver = role === 'driver';
   const [d, setD] = useState(isDriver
     ? { vehicle: 'Motorbike', model: 'Honda Click 125', plate: '', license: null, selfie: null }
     : { store: '', type: CATEGORIES[0], area: '', address: '', permit: null, front: null });
-  const set = (k, v) => setD({ ...d, [k]: v });
+  const set = (k, v) => setD((p) => ({ ...p, [k]: v })); // functional: typing during an upload must not be lost
   const need = isDriver ? ['plate', 'license', 'selfie'] : ['store', 'type', 'address', 'permit', 'front'];
   const ready = need.every((k) => d[k]);
+  const snapDoc = async (k) => {
+    setUpl(k);
+    try {
+      const url = await takeDocPhoto({ kind: k, owner: s.auth && s.auth.phone, bucket: DOC_BUCKET[k] });
+      if (url) set(k, url);
+    } finally { setUpl(null); }
+  };
   const DocBtn = ({ k, label }) => (
-    <Btn small kind={d[k] ? 'ghost' : 'main'} title={d[k] ? '✓ ' + d[k] : '📷 ' + label}
-         onPress={() => set(k, mkDoc(label.toLowerCase().replace(/\s/g, '-') + '.jpg'))} />
+    <View>
+      <Btn small kind={d[k] ? 'ghost' : 'main'} busy={upl === k}
+           title={d[k] ? '✓ Uploaded — tap to retake' : '📷 ' + label} onPress={() => snapDoc(k)} />
+      {d[k] ? <Image source={{ uri: d[k] }} resizeMode="cover" style={{ width: '100%', height: 110, borderRadius: 10, marginTop: 6 }} /> : null}
+    </View>
   );
   return (
     <ScrollView style={{ flex: 1, backgroundColor: C.paper, padding: 16 }}>
@@ -185,6 +199,60 @@ function KycForm({ role, onDone }) {
   );
 }
 
+// V16: settings — the user edits name + photo after login. Photo is uploaded to Supabase Storage,
+// name/photo are saved locally at once and synced to profiles(name, avatar_url).
+function EditProfile({ visible, onClose }) {
+  const { s, setProfile } = useStore();
+  const phone = s.auth && s.auth.phone;
+  const [name, setName] = useState(s.profile.name || '');
+  const [avatar, setAvatar] = useState(s.profile.avatar || null);
+  const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  React.useEffect(() => { if (visible) { setName(s.profile.name || ''); setAvatar(s.profile.avatar || null); } }, [visible]);
+  const clean = name.trim();
+  const nameOk = clean.length >= 2 && clean.length <= 40;
+  const pickAvatar = async () => {
+    setBusy(true);
+    try { const url = await takeDocPhoto({ kind: 'avatar', owner: phone, bucket: BUCKETS.avatar, square: true }); if (url) setAvatar(url); }
+    finally { setBusy(false); }
+  };
+  const save = async () => {
+    setSaving(true);
+    setProfile({ name: clean, avatar });
+    try { await saveProfileRemote(phone, { name: clean, avatar_url: avatar }); }
+    catch (e) { Alert.alert('Saved on this phone', 'Could not sync to the cloud yet: ' + String((e && e.message) || e)); }
+    setSaving(false); onClose();
+  };
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: C.paper }}>
+        <View style={{ backgroundColor: C.greenDk, padding: 18, borderBottomLeftRadius: 24, borderBottomRightRadius: 24 }}>
+          <Pressable onPress={onClose}><Txt c="#fff" s={20}>‹ Back</Txt></Pressable>
+          <Txt b s={20} c="#fff" style={{ marginTop: 8 }}>⚙️ Settings — my profile</Txt>
+        </View>
+        <ScrollView style={{ flex: 1, padding: 18 }} keyboardShouldPersistTaps="handled">
+          <View style={{ alignItems: 'center', marginTop: 8 }}>
+            <Pressable onPress={pickAvatar} style={{ width: 120, height: 120, borderRadius: 60, backgroundColor: '#fff', borderWidth: 2,
+                                                    borderColor: C.green, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+              {avatar ? <Image source={{ uri: avatar }} style={{ width: 120, height: 120 }} resizeMode="cover" /> : <Txt s={52}>👤</Txt>}
+            </Pressable>
+            <Btn small kind="ghost" busy={busy} title={avatar ? '📷 Change photo' : '📷 Add photo'} onPress={pickAvatar} style={{ paddingHorizontal: 22 }} />
+          </View>
+          <Txt b s={13} style={{ marginTop: 22, marginBottom: 6 }}>Your name</Txt>
+          <Field value={name} onChangeText={setName} placeholder="Full name" maxLength={40} autoCapitalize="words" />
+          {!nameOk && name.length > 0 && <Txt s={11} c={C.bad} style={{ marginTop: 4 }}>Name must be 2–40 characters.</Txt>}
+          <Txt b s={13} style={{ marginTop: 16, marginBottom: 6 }}>Mobile number</Txt>
+          <View style={{ borderWidth: 1, borderColor: C.line, borderRadius: 14, padding: 14, backgroundColor: '#EEF2EF' }}>
+            <Txt s={16} c={C.mute}>{phone || '—'}</Txt>
+          </View>
+          <Txt s={11} c={C.mute} style={{ marginTop: 4 }}>The number is your login and cannot be changed here.</Txt>
+          <Btn title="Save" busy={saving || busy} disabled={!nameOk} onPress={save} />
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
 function Pending({ role }) {
   return (
     <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 30 }}>
@@ -204,6 +272,7 @@ export default function Profile({ onOpenAddresses }) {
   const [kyc, setKyc] = useState(null);
   const [coupon, setCoupon] = useState('');
   const [wdOpen, setWdOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const role = s.activeRole;
   const myOrders = s.orders.filter((o) => o.mine).length;
   const verified = role === 'customer' || (s.roles && s.roles[role] && s.roles[role].status === 'approved');
@@ -225,17 +294,18 @@ export default function Profile({ onOpenAddresses }) {
     <ScrollView style={{ flex: 1, backgroundColor: '#fff' }}>
       <View style={{ backgroundColor: C.greenDk, padding: 18, paddingBottom: 26 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <View style={{ width: 62, height: 62, borderRadius: 31, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
-            <Txt s={30}>👤</Txt>
-          </View>
-          <View style={{ flex: 1, marginLeft: 12 }}>
-            <Txt b s={16} c="#fff">{s.profile.name}</Txt>
+          <Pressable onPress={() => setEditOpen(true)} style={{ width: 62, height: 62, borderRadius: 31, backgroundColor: '#fff',
+                                                                alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+            {s.profile.avatar ? <Image source={{ uri: s.profile.avatar }} style={{ width: 62, height: 62 }} resizeMode="cover" /> : <Txt s={30}>👤</Txt>}
+          </Pressable>
+          <Pressable onPress={() => setEditOpen(true)} style={{ flex: 1, marginLeft: 12 }}>
+            <Txt b s={16} c="#fff">{s.profile.name} <Txt s={12} c="#CFE8DD">✏️</Txt></Txt>
             <Txt s={13} c="#F2A900">★★★★★ {s.profile.rating.toFixed(1)}</Txt>
             <View style={{ backgroundColor: verified ? C.green : '#6B7A72', borderRadius: 8, alignSelf: 'flex-start',
                            paddingHorizontal: 8, paddingVertical: 2, marginTop: 4 }}>
               <Txt s={10} b c="#fff">{verified ? '✓ Verified' : 'Unverified'}</Txt>
             </View>
-          </View>
+          </Pressable>
           <Pressable onPress={signOut}><Txt s={22} c="#fff">⏻</Txt></Pressable>
         </View>
       </View>
@@ -271,7 +341,7 @@ export default function Profile({ onOpenAddresses }) {
         </View>} />
       <Row icon="❓" label={T('support')} />
       <Row icon="🛡" label={T('offers')} />
-      <Row icon="⚙️" label={T('settings')} />
+      <Row icon="⚙️" label={T('settings') + ' · name & photo'} value="Edit" onPress={() => setEditOpen(true)} />
       <Row icon="💳" label={T('payMethods')} />
       <View style={{ padding: 16 }}>
         {(role === 'customer' && s.roles.vendor.status !== 'approved' && s.roles.vendor.status !== 'pending') && (
@@ -285,6 +355,7 @@ export default function Profile({ onOpenAddresses }) {
       </View>
       <View style={{ height: 90 }} />
       <RoleDialog visible={dlg} onClose={() => setDlg(false)} onPick={pickRole} />
+      <EditProfile visible={editOpen} onClose={() => setEditOpen(false)} />
     </ScrollView>
   );
 }

@@ -1,96 +1,139 @@
-// Driver — V9 pushes GPS samples to s.driverLocations. Foreground watchPosition
-// is the honest web path; background tracking requires the Capacitor / expo-task-manager
-// route (documented in BG_GEO_LIMITATIONS.md). When GPS isn't available we still
-// randomly nudge near Brgy. Sta. Rosa so the customer banner has something to render.
+// Driver board (V16): real background tracking (Android foreground service), real pickup /
+// delivery photos, offers with a visible countdown + custom counter, distance and Google Maps nav.
 import React, { useEffect, useState } from 'react';
-import { ScrollView, Switch, View } from 'react-native';
-import { C, ORDER_STATUS, peso, BG_GEO } from './lib';
+import { Linking, ScrollView, Switch, View } from 'react-native';
+import { C, ORDER_STATUS, peso, BG_GEO, distanceKm, fmtKm, navUrl } from './lib';
 import { useStore } from './store';
-import { Btn, Card, Field, Row, Section, Txt } from './ui';
+import { startBgTracking, stopBgTracking, publishLocation } from './tracking';
+import { takeProofPhoto } from './media';
+import { Btn, Card, Countdown, Field, Row, Section, Txt } from './ui';
 import { PhotoTimeline, photoBubble } from './Customer';
 
 export default function Driver() {
-  const { s, driverAnswer, driverPickup, driverDeliver, catalogDel, catalogAdd, offerAnswer, toggleOnline, updateDriverLocation } = useStore();
-  const [acceptPrice, setAcceptPrice] = useState({});
-  const [newName, setNewName] = useState('');
-  const [newPrice, setNewPrice] = useState('');
-  const intervalRef = React.useRef(null);
+  const { s, driverPickup, driverDeliver, offerAnswer, toggleOnline, updateDriverLocation } = useStore();
+  const [counter, setCounter] = useState({});
+  const [busy, setBusy] = useState(null);
+  const [trk, setTrk] = useState({ state: 'idle' }); // idle | starting | bg | fg | denied
+  const phone = s.auth && s.auth.phone;
 
-  // V9: foreground GPS publish every 5s when driver is online.
+  // Online → start background tracking (foreground service) + a foreground watcher for the live UI.
   useEffect(() => {
-    if (!s.driverOnline) { if (intervalRef.current) clearInterval(intervalRef.current); intervalRef.current = null; return; }
-    let alive = true;
-    let cleanup = null;
-    let fallback = null;
+    if (!s.driverOnline) { stopBgTracking(); setTrk({ state: 'idle' }); return undefined; }
+    let alive = true, sub = null;
     (async () => {
+      setTrk({ state: 'starting' });
+      const r = await startBgTracking(phone || 'me');
+      if (!alive) return;
+      setTrk(r.ok ? { state: 'bg' } : { state: r.reason === 'foreground-denied' ? 'denied' : 'fg', reason: r.reason, message: r.message });
       try {
         const Location = require('expo-location');
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status === 'granted') {
-          const sub = await Location.watchPositionAsync({ accuracy: Location.Accuracy.Balanced, timeInterval: 5000, distanceInterval: 10 }, (pos) => {
-            if (!alive) return;
-            updateDriverLocation(s.auth?.phone || 'me', pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy, 'fg');
-          });
-          cleanup = () => sub.remove();
-        } else {
-          // Browser / no permission: simulate point near the seeded stores so a customer can still see banner.
-          fallback = setInterval(() => {
-            const jitter = () => (Math.random() - 0.5) * 0.0006;
-            updateDriverLocation(s.auth?.phone || 'me', 14.5995 + jitter(), 120.9842 + jitter(), 50, 'fg');
-          }, 5000);
-        }
-      } catch (e) {
-        fallback = setInterval(() => {
-          const jitter = () => (Math.random() - 0.5) * 0.0006;
-          updateDriverLocation(s.auth?.phone || 'me', 14.5995 + jitter(), 120.9842 + jitter(), 50, 'fg');
-        }, 5000);
-      }
+        const perm = await Location.getForegroundPermissionsAsync();
+        if (!perm.granted || !alive) return;
+        sub = await Location.watchPositionAsync({ accuracy: Location.Accuracy.Balanced, timeInterval: 5000, distanceInterval: 10 }, (pos) => {
+          if (!alive) return;
+          updateDriverLocation(phone || 'me', pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy, 'fg');
+          if (!r.ok) publishLocation(phone, pos.coords, 'fg'); // fg-only fallback publishes itself
+        });
+      } catch (e) { /* location module unavailable */ }
     })();
-    return () => { alive = false; if (cleanup) cleanup(); if (fallback) clearInterval(fallback); };
+    // Leaving this screen must NOT stop the background service — only going offline / logging out does.
+    return () => { alive = false; if (sub) sub.remove(); };
   }, [s.driverOnline]);
 
-  const offers = s.orders.filter((o) => !o.mine && o.myRole === 'driver' && o.status === 'driver_offer' && !o.expired && o.neg?.turn === 'me');
-  const active = s.orders.filter((o) => !o.mine && o.myRole === 'driver' && ['accepted', 'ready_pickup', 'picked_up'].includes(o.status) && !o.expired);
-  const completed = s.orders.filter((o) => !o.mine && o.myRole === 'driver' && o.status === 'completed');
+  const snap = async (key, kind, then) => {
+    setBusy(key);
+    try { const p = await takeProofPhoto({ kind, owner: phone }); if (p) then(p); } finally { setBusy(null); }
+  };
+
+  const mineOrders = s.orders.filter((o) => !o.mine && o.myRole === 'driver');
+  const offers = mineOrders.filter((o) => o.status === 'driver_offer' && !o.expired && o.neg && o.neg.turn === 'me');
+  const waiting = mineOrders.filter((o) => o.status === 'driver_offer' && !o.expired && o.neg && o.neg.turn === 'them');
+  const active = mineOrders.filter((o) => ['accepted', 'ready_pickup', 'picked_up', 'delivered'].includes(o.status) && !o.expired);
+  const completed = mineOrders.filter((o) => o.status === 'completed');
   const earnings = (s.wallet.tx || []).filter((t) => t.kind === 'delivery').reduce((a, t) => a + t.amount, 0);
   const pct = s.settings.commissions.driverPct;
+  const me = (s.driverLocations || {})[phone || 'me'];
+  const here = me ? { lat: me.lat, lng: me.lng } : null;
+  const open = (lat, lng) => lat != null && Linking.openURL(navUrl(lat, lng)).catch(() => {});
+
+  const statusLine = {
+    idle: null,
+    starting: { c: C.mute, t: '⏳ Starting location sharing…' },
+    bg: { c: C.green, t: '✅ Online · live location active, works with the screen locked' },
+    fg: { c: C.amber, t: '⚠️ Online, but only while the app is open. Set Location to "Allow all the time" to keep tracking with the screen locked.' },
+    denied: { c: C.bad, t: '❌ Location permission denied — customers cannot see you. Enable it in Android settings.' },
+  }[trk.state];
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: C.paper, padding: 14 }}>
       <Section title="🛵 Driver board">
         <Row icon="🟢" label="Online" right={<Switch value={!!s.driverOnline} onValueChange={(v) => toggleOnline('driver', v)} trackColor={{ true: C.green }} />} />
-        <Txt s={10} c={C.mute}>{BG_GEO.webLimitation}</Txt>
-        <Txt s={10} c={C.mute} style={{ marginTop: 4 }}>For continuous tracking: {BG_GEO.apkPath}</Txt>
-        {!s.driverOnline && <Txt s={12} c={C.mute} style={{ marginTop: 6 }}>Go online to start receiving offers.</Txt>}
-        {s.driverOnline && <Txt s={12} c={C.green} style={{ marginTop: 6 }}>✅ Online · GPS pinging every 5s</Txt>}
+        {!s.driverOnline && <Txt s={12} c={C.mute} style={{ marginTop: 6 }}>Go online to start receiving offers. {BG_GEO.info}</Txt>}
+        {statusLine && <Txt s={12} c={statusLine.c} style={{ marginTop: 6 }}>{statusLine.t}</Txt>}
+        {s.driverOnline && trk.state !== 'bg' && trk.state !== 'starting' && trk.state !== 'idle' && (
+          <Btn small kind="ghost" title="Open app settings" onPress={() => Linking.openSettings().catch(() => {})} />
+        )}
+        {trk.message ? <Txt s={10} c={C.mute} style={{ marginTop: 4 }}>{trk.message}</Txt> : null}
       </Section>
 
       <Section title="📥 Incoming offers">
-        {offers.length === 0 && <Txt s={12} c={C.mute}>{s.driverOnline ? 'Waiting for offers…' : 'Go online first.'}</Txt>}
-        {offers.map((o) => (
-          <Card key={o.id} style={{ marginBottom: 10 }}>
-            <Txt b s={14}>{o.items}</Txt>
-            <Txt s={11} c={C.mute}>{o.customer} · {ORDER_STATUS[o.status] || o.status} · customer offers {peso(o.neg.amount)}</Txt>
-            <View style={{ flexDirection: 'row', marginTop: 8 }}>
-              <Btn small title={`✓ Accept ${peso(o.neg.amount)}`} onPress={() => driverAnswer(o.id, 'accept')} style={{ flex: 1, marginRight: 6 }} />
-              <Btn small kind="ghost" title="Counter" onPress={() => driverAnswer(o.id, 'counter', Math.round(o.neg.amount * 1.2))} style={{ flex: 1, marginRight: 6 }} />
-              <Btn small kind="bad" title="Refuse" onPress={() => driverAnswer(o.id, 'refuse')} style={{ flex: 1 }} />
-            </View>
-          </Card>
-        ))}
+        {offers.length === 0 && <Txt s={12} c={C.mute}>{s.driverOnline ? 'Waiting for offers… (demo: one arrives within ~45s)' : 'Go online first.'}</Txt>}
+        {offers.map((o) => {
+          const left = Math.max(0, (o.neg.deadline || 0) - Date.now());
+          const total = (s.settings.offerSecs || 30) * 1000;
+          const trip = distanceKm({ lat: o.pickupLat, lng: o.pickupLng }, { lat: o.dropLat, lng: o.dropLng });
+          const toStore = distanceKm(here, { lat: o.pickupLat, lng: o.pickupLng });
+          return (
+            <Card key={o.id} style={{ marginBottom: 10 }}>
+              <Txt b s={14}>{o.items}</Txt>
+              <Txt s={11} c={C.mute}>{o.customer} · customer offers {peso(o.neg.amount)}{o.neg.history && o.neg.history.length > 1 ? ' (their counter was declined)' : ''}</Txt>
+              <Txt s={11} c={C.mute} style={{ marginTop: 2 }}>🏪 {o.pickup}{toStore != null ? ' · ' + fmtKm(toStore) + ' from you' : ''}</Txt>
+              <Txt s={11} c={C.mute}>🏠 {o.dropoff}{trip != null ? ' · trip ' + fmtKm(trip) : ''}</Txt>
+              <Txt s={11} b c={left < 10000 ? C.bad : C.green} style={{ marginTop: 4 }}>⏱ {Math.ceil(left / 1000)}s to answer</Txt>
+              <Countdown left={left} total={total} />
+              <View style={{ flexDirection: 'row', marginTop: 8 }}>
+                <Btn small title={'✓ Accept ' + peso(o.neg.amount)} onPress={() => offerAnswer(o.id, 'accept')} style={{ flex: 1, marginRight: 6 }} />
+                <Btn small kind="bad" title="Refuse" onPress={() => offerAnswer(o.id, 'refuse')} style={{ flex: 1 }} />
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
+                <Field value={counter[o.id] || ''} onChangeText={(v) => setCounter({ ...counter, [o.id]: v.replace(/[^0-9]/g, '') })}
+                       keyboardType="number-pad" placeholder="Your fare ₱" style={{ flex: 1, padding: 10 }} />
+                <Btn small kind="ghost" title="Counter" disabled={!counter[o.id] || Number(counter[o.id]) <= o.neg.amount}
+                     onPress={() => { offerAnswer(o.id, 'counter', Number(counter[o.id])); setCounter({ ...counter, [o.id]: '' }); }}
+                     style={{ marginLeft: 8, marginTop: 0, paddingHorizontal: 14 }} />
+              </View>
+            </Card>
+          );
+        })}
+        {waiting.map((o) => <Card key={o.id} style={{ marginBottom: 8, paddingVertical: 10 }}><Txt s={12} c={C.mute}>⏳ Waiting for {o.customer} to answer your fare of {peso(o.neg.amount)}…</Txt></Card>)}
       </Section>
 
       <Section title="🚚 Active">
         {active.length === 0 && <Txt s={12} c={C.mute}>No active deliveries.</Txt>}
-        {active.map((o) => (
-          <Card key={o.id} style={{ marginBottom: 10 }}>
-            <Txt b s={14}>{o.items}</Txt>
-            <Txt s={11} c={C.mute}>{o.customer} · {ORDER_STATUS[o.status] || o.status}</Txt>
-            <PhotoTimeline o={o} />
-            {['product', 'packed', 'pickup', 'delivery'].map((k) => o.photos && o.photos[k] ? <View key={k}>{photoBubble(o.photos[k])}</View> : null)}
-            {o.status === 'accepted' && <Btn small title="📦 Pick up" onPress={() => driverPickup(o.id, { by: 'me', kind: 'pickup', ts: Date.now(), stamp: 'Live GPS', simulated: true })} />}
-          </Card>
-        ))}
+        {active.map((o) => {
+          const toStore = distanceKm(here, { lat: o.pickupLat, lng: o.pickupLng });
+          const toCustomer = distanceKm(here, { lat: o.dropLat, lng: o.dropLng });
+          return (
+            <Card key={o.id} style={{ marginBottom: 10 }}>
+              <Txt b s={14}>{o.items}</Txt>
+              <Txt s={11} c={C.mute}>{o.customer} · {ORDER_STATUS[o.status] || o.status} · fare {peso(o.fee)}</Txt>
+              <Txt s={11} c={C.mute} style={{ marginTop: 2 }}>🏪 {o.pickup}{toStore != null ? ' · ' + fmtKm(toStore) : ''}</Txt>
+              <Txt s={11} c={C.mute}>🏠 {o.dropoff}{toCustomer != null ? ' · ' + fmtKm(toCustomer) : ''}</Txt>
+              <PhotoTimeline o={o} />
+              {['product', 'packed', 'pickup', 'delivery'].map((k) => (o.photos && o.photos[k]) ? <View key={k}>{photoBubble(o.photos[k])}</View> : null)}
+              {o.status === 'accepted' && <Txt s={12} c={C.mute} style={{ marginTop: 8 }}>⏳ Store is packing the order…</Txt>}
+              {o.status === 'ready_pickup' && <>
+                <Btn small kind="ghost" title="🧭 Navigate to store" onPress={() => open(o.pickupLat, o.pickupLng)} />
+                <Btn small busy={busy === 'u' + o.id} title="📦 Picked up — take photo" onPress={() => snap('u' + o.id, 'pickup', (p) => driverPickup(o.id, p))} />
+              </>}
+              {o.status === 'picked_up' && <>
+                <Btn small kind="ghost" title="🧭 Navigate to customer" onPress={() => open(o.dropLat, o.dropLng)} />
+                <Btn small busy={busy === 'd' + o.id} title="🏠 Delivered — take photo" onPress={() => snap('d' + o.id, 'delivery', (p) => driverDeliver(o.id, p))} />
+              </>}
+              {o.status === 'delivered' && <Txt s={12} c={C.mute} style={{ marginTop: 8 }}>✅ Delivered — waiting for the customer to confirm…</Txt>}
+            </Card>
+          );
+        })}
       </Section>
 
       <Section title={'💰 Earnings: ' + peso(earnings) + ' net (after ' + pct + '% fee)'}>

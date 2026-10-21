@@ -3,6 +3,7 @@ import 'react-native-get-random-values';
 import 'react-native-url-polyfill/auto';
 import { Buffer } from 'buffer';
 global.Buffer = global.Buffer || Buffer;
+import './tracking'; // defines the background-location task at module scope
 import { registerRootComponent } from 'expo';
 import App from './App';
 registerRootComponent(App);

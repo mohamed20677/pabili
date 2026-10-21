@@ -1,21 +1,29 @@
-// Vendor dashboard: incoming orders, quote with REQUIRED product photo, pack photo, handover, catalog, earnings
+// Vendor dashboard (V16): real product / packed photos uploaded to Supabase Storage,
+// quote → customer counter → agree → pack (photo) → hand over → sale credited to the wallet.
 import React, { useState } from 'react';
-import { ScrollView, Switch, View } from 'react-native';
-import { C, ORDER_STATUS, peso } from './lib';
+import { Image, ScrollView, Switch, View } from 'react-native';
+import { C, ORDER_STATUS, peso, distanceKm, fmtKm } from './lib';
 import { useStore } from './store';
+import { takeProofPhoto } from './media';
 import { Btn, Card, Field, Section, Txt } from './ui';
 import { PhotoTimeline, photoBubble } from './Customer';
-
-const mkPhoto = (kind) => ({ by: 'me', kind, ts: Date.now(), stamp: new Date().toLocaleString() + ' · GPS locked', simulated: true });
 
 export default function Vendor() {
   const { s, vendorQuote, vendorPacked, vendorHandover, toggleOnline, catalogAdd, catalogDel, offerAnswer } = useStore();
   const [price, setPrice] = useState({});
-  const [photoDone, setPhotoDone] = useState({});
+  const [counter, setCounter] = useState({});
+  const [shots, setShots] = useState({}); // orderId -> uploaded product photo
+  const [busy, setBusy] = useState(null);
   const [newName, setNewName] = useState('');
   const [newPrice, setNewPrice] = useState('');
+  const owner = s.auth && s.auth.phone;
+
+  const snap = async (key, kind, then) => {
+    setBusy(key);
+    try { const p = await takeProofPhoto({ kind, owner }); if (p) then(p); } finally { setBusy(null); }
+  };
+
   const incoming = s.orders.filter((o) => !o.mine && o.myRole === 'vendor' && !o.expired && o.status !== 'completed' && o.status !== 'cancelled');
-  const done = s.orders.filter((o) => !o.mine && o.myRole === 'vendor' && o.status === 'completed');
   const earnings = s.wallet.tx.filter((t) => t.kind === 'sale').reduce((a, t) => a + t.amount, 0);
   const pct = s.settings.commissions.vendorPct;
   return (
@@ -31,43 +39,65 @@ export default function Vendor() {
         </View>
       </View>
       {!s.storeOpen && <Card><Txt s={13} c={C.mute}>Your store is closed — open it to receive orders.</Txt></Card>}
-      {s.storeOpen && incoming.length === 0 && <Card><Txt s={13} c={C.mute}>Waiting for orders… (a bot order arrives within ~45s)</Txt></Card>}
-      {incoming.map((o) => (
-        <Card key={o.id} style={{ marginBottom: 12 }}>
-          <Txt b s={15}>{o.items}</Txt>
-          <Txt s={11} c={C.mute} style={{ marginTop: 4 }}>👤 {o.customer} · {ORDER_STATUS[o.status] || o.status} · fee {peso(o.fee)}</Txt>
-          <PhotoTimeline o={o} />
-          {o.status === 'vendor_quote' && (
-            <View style={{ marginTop: 10 }}>
-              <Btn small kind={photoDone[o.id] ? 'ghost' : 'main'}
-                   title={photoDone[o.id] ? '✓ Product photo attached' : '📷 Photo of the actual product (required)'}
-                   onPress={() => setPhotoDone({ ...photoDone, [o.id]: true })} />
-              {photoDone[o.id] && photoBubble(mkPhoto('product'))}
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
-                <Field value={price[o.id] || ''} onChangeText={(v) => setPrice({ ...price, [o.id]: v.replace(/[^0-9]/g, '') })}
-                       keyboardType="number-pad" placeholder="Your price ₱" style={{ flex: 1, padding: 10 }} />
-                <Btn small title="Send quote" disabled={!photoDone[o.id] || !price[o.id]}
-                     onPress={() => vendorQuote(o.id, Number(price[o.id]), mkPhoto('product'))}
-                     style={{ marginLeft: 8, marginTop: 0, paddingHorizontal: 14 }} />
+      {s.storeOpen && incoming.length === 0 && <Card><Txt s={13} c={C.mute}>Waiting for orders… (demo: a simulated order arrives within ~45s)</Txt></Card>}
+
+      {incoming.map((o) => {
+        const shot = shots[o.id];
+        const km = distanceKm({ lat: o.pickupLat, lng: o.pickupLng }, { lat: o.dropLat, lng: o.dropLng });
+        return (
+          <Card key={o.id} style={{ marginBottom: 12 }}>
+            <Txt b s={15}>{o.items}</Txt>
+            <Txt s={11} c={C.mute} style={{ marginTop: 4 }}>
+              👤 {o.customer} · {ORDER_STATUS[o.status] || o.status} · fee {peso(o.fee)}{km != null ? ' · delivery ' + fmtKm(km) : ''}
+            </Txt>
+            {o.price > 0 && <Txt s={12} b c={C.green} style={{ marginTop: 2 }}>Agreed price {peso(o.price)}</Txt>}
+            <PhotoTimeline o={o} />
+
+            {o.status === 'vendor_quote' && (
+              <View style={{ marginTop: 10 }}>
+                <Btn small kind={shot ? 'ghost' : 'main'} busy={busy === 'q' + o.id}
+                     title={shot ? '✓ Product photo uploaded — tap to retake' : '📷 Photo of the actual product (required)'}
+                     onPress={() => snap('q' + o.id, 'product', (p) => setShots({ ...shots, [o.id]: p }))} />
+                {shot && <Image source={{ uri: shot.uri }} style={{ width: '100%', height: 150, borderRadius: 10, marginTop: 8 }} resizeMode="cover" />}
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
+                  <Field value={price[o.id] || ''} onChangeText={(v) => setPrice({ ...price, [o.id]: v.replace(/[^0-9]/g, '') })}
+                         keyboardType="number-pad" placeholder="Your price ₱" style={{ flex: 1, padding: 10 }} />
+                  <Btn small title="Send quote" disabled={!shot || !price[o.id]}
+                       onPress={() => vendorQuote(o.id, Number(price[o.id]), shot)}
+                       style={{ marginLeft: 8, marginTop: 0, paddingHorizontal: 14 }} />
+                </View>
               </View>
-            </View>
-          )}
-          {o.neg && o.neg.turn === 'me' && o.status !== 'vendor_quote' && (
-            <View style={{ marginTop: 8 }}>
-              <Txt s={12} c={C.amber}>💬 Customer countered: {peso(o.neg.amount)}</Txt>
-              <View style={{ flexDirection: 'row', marginTop: 6 }}>
-                <Btn small title="Accept" onPress={() => offerAnswer(o.id, 'accept')} style={{ flex: 1, marginRight: 6 }} />
-                <Btn small kind="ghost" title="Counter" onPress={() => offerAnswer(o.id, 'counter', Math.round(o.neg.amount * 1.1))} style={{ flex: 1, marginRight: 6 }} />
-                <Btn small kind="bad" title="Refuse" onPress={() => offerAnswer(o.id, 'refuse')} style={{ flex: 1 }} />
+            )}
+
+            {o.status === 'quote_sent' && <Txt s={12} c={C.mute} style={{ marginTop: 8 }}>⏳ Quote of {peso(o.neg ? o.neg.amount : o.price)} sent — waiting for the customer…</Txt>}
+
+            {o.neg && o.neg.turn === 'me' && o.status === 'vendor_talk' && (
+              <View style={{ marginTop: 8 }}>
+                <Txt s={12} c={C.amber}>💬 Customer countered: {peso(o.neg.amount)}</Txt>
+                <View style={{ flexDirection: 'row', marginTop: 6, alignItems: 'center' }}>
+                  <Btn small title={'Accept ' + peso(o.neg.amount)} onPress={() => offerAnswer(o.id, 'accept')} style={{ flex: 1, marginRight: 6 }} />
+                  <Btn small kind="bad" title="Refuse" onPress={() => offerAnswer(o.id, 'refuse')} style={{ flex: 1 }} />
+                </View>
+                <View style={{ flexDirection: 'row', marginTop: 6, alignItems: 'center' }}>
+                  <Field value={counter[o.id] || ''} onChangeText={(v) => setCounter({ ...counter, [o.id]: v.replace(/[^0-9]/g, '') })}
+                         keyboardType="number-pad" placeholder="Your counter ₱" style={{ flex: 1, padding: 10 }} />
+                  <Btn small kind="ghost" title="Counter" disabled={!counter[o.id]}
+                       onPress={() => { offerAnswer(o.id, 'counter', Number(counter[o.id])); setCounter({ ...counter, [o.id]: '' }); }}
+                       style={{ marginLeft: 8, marginTop: 0, paddingHorizontal: 14 }} />
+                </View>
               </View>
-            </View>
-          )}
-          {o.status === 'awaiting_pack' && <Btn small title="📷 Order packed — take photo" onPress={() => vendorPacked(o.id, mkPhoto('packed'))} />}
-          {o.status === 'ready_pickup' && <Btn small title="🤝 Hand over to courier" onPress={() => vendorHandover(o.id)} />}
-          {(o.status === 'picked_up' || o.status === 'delivered' || o.status === 'handover_done') &&
-            ['product', 'packed'].map((k) => o.photos[k] ? <View key={k}>{photoBubble(o.photos[k])}</View> : null)}
-        </Card>
-      ))}
+            )}
+
+            {o.status === 'awaiting_pack' && (
+              <Btn small busy={busy === 'p' + o.id} title="📷 Order packed — take photo"
+                   onPress={() => snap('p' + o.id, 'packed', (p) => vendorPacked(o.id, p))} />
+            )}
+            {o.status === 'ready_pickup' && <Btn small title="🤝 Hand over to courier" onPress={() => vendorHandover(o.id)} />}
+            {o.status === 'handover_done' && <Txt s={12} c={C.mute} style={{ marginTop: 8 }}>✅ Handed over — payment is released when the customer confirms.</Txt>}
+            {['product', 'packed'].map((k) => (o.photos && o.photos[k]) ? <View key={k}>{photoBubble(o.photos[k])}</View> : null)}
+          </Card>
+        );
+      })}
 
       <Section title="📦 My products">
         {(s.catalog || []).map((p) => (

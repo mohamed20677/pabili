@@ -1,34 +1,18 @@
-# Pabili PH — Background-geolocation limitations (honest)
+# Pabili PH — Background location (V16)
 
-Browsers **halt `watchPosition` when the page is backgrounded or the screen is locked**.
-That is a platform reality, not a bug we can patch around. Drivers in the web build
-will only see live GPS samples while the app is in the foreground.
+Background tracking is **real on the Android APK**: when a courier goes Online, `tracking.js`
+starts an Android foreground service (`expo-task-manager` + `expo-location`). A persistent
+notification ("Pabili — you are online") keeps it alive with the screen locked or the app in
+the background. Points are upserted every ~10 s / 15 m into `driver_locations` (one row per driver).
 
-## What V9 ships now
+## What the courier must do once
+1. Allow **Location → "Allow all the time"** (Android 11+ sends you to the app's settings page).
+2. Allow notifications (Android 13+) so the foreground-service notice is visible.
+3. On Xiaomi / Oppo / Vivo / Samsung: set battery to **Unrestricted** for Pabili, otherwise the
+   phone may still kill it after a while.
 
-| Path | Where it works | Notes |
-|------|----------------|-------|
-| Foreground `Location.watchPositionAsync({ timeInterval: 5000 })` | Mobile foreground + browser active tab | Source flag = `fg`. |
-| Manual jitter fallback if permission denied / `expo-location` missing | Web BlueStacks preview | Source flag = `fg` but value is simulated. Banner says so clearly ("GPS simulated"). |
-| Live courier banner in `OrdersTab` (`DriverLocationBanner`) | Already wired to `useStore().listDriverLocations()` | Renders last reported point + source/age. |
-
-## Recommended upgrade for "background" tracking
-
-To get true continuous tracking — even with the screen locked — you need a native
-build. Two options:
-
-1. **Capacitor 6 + `@capacitor-community/background-geolocation`**  
-   The plugin runs an Android foreground service that survives lock screen and
-   reboots. Configure `ACCESS_BACKGROUND_LOCATION` in your `capacitor.config.ts`.
-   Pair the output with a Supabase Edge Function that debounces the writes so
-   the battery cost is bounded.
-
-2. **Expo Dev Build + `expo-task-manager` + `expo-location`**  
-   Define a `TaskManager.defineTask('bg-location', …)`, register it with
-   `Location.startLocationUpdatesAsync(taskName, { accuracy, timeInterval })`.
-   This requires that the APK be built via `eas build` (not `expo export:embed`
-   intra-BlueStacks preview), and works only with `ACCESS_BACKGROUND_LOCATION`
-   granted at runtime.
-
-Until one of those is enabled, the banner inside the customer app *honestly says*
-"Driver hasn't shared live location yet" rather than printing a fake coordinate.
+## Honest limits
+- Does not work in a browser or Expo Go; it needs the built APK (`expo prebuild` applies the plugin).
+- If the courier picks "While using the app" only, the app falls back to foreground tracking and says so.
+- Google Play requires a background-location declaration + demo video before you can publish.
+- `driver_locations` is readable by anyone with the anon key (dev policy). Tighten before launch.

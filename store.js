@@ -5,6 +5,7 @@
 // the previous bugs taught us, so this version is strict about it.
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { stopBgTracking } from './tracking';
 import { uid, now, WITHDRAWAL_PROVIDERS, WITHDRAWAL_LIMITS, WITHDRAWAL_DAILY_CAP_GLOBAL, MIN_WITHDRAWAL } from './lib';
 
 const KEY = 'pabili.ph.v1';
@@ -111,6 +112,7 @@ export function StoreProvider({ children }) {
   function engine(cur) {
     if (!cur) return cur;
     let changed = false;
+    const credits = []; // wallet credits collected during this tick (applied once, below)
     const orders = cur.orders.map((o) => {
       const n = { ...o };
       const age = (now() - n.updated) / 1000;
@@ -153,14 +155,44 @@ export function StoreProvider({ children }) {
         n.photos = { ...n.photos, packed: photo('vendor', 'packed') };
         n.status = 'ready_pickup'; n.updated = now(); changed = true;
       }
+      // ---- V16: bot customer answers the store's quote (accept, or counter once) ----
+      if (!n.mine && n.myRole === 'vendor' && n.status === 'quote_sent' && n.neg && n.neg.turn === 'them' && age > 5) {
+        if (!n.botCountered && Math.random() < 0.3) {
+          n.botCountered = true;
+          const amt = Math.max(1, Math.round(n.neg.amount * 0.88));
+          n.neg = { ...n.neg, turn: 'me', amount: amt, history: [...(n.neg.history || []), { by: 'customer', amount: amt, ts: now(), note: 'Customer countered' }] };
+          n.status = 'vendor_talk'; pushAlert(cur, 'Customer countered your quote');
+        } else {
+          n.price = n.neg.amount; n.neg = null; n.status = 'awaiting_pack';
+          pushAlert(cur, 'Customer accepted your quote — pack the order');
+        }
+        n.updated = now(); changed = true;
+      }
+      if (!n.mine && n.myRole === 'vendor' && n.status === 'handover_done' && age > 6) {
+        n.status = 'completed'; n.updated = now();
+        credits.push({ amount: Math.round(n.price * (1 - cur.settings.commissions.vendorPct / 100) * 100) / 100, kind: 'sale', orderId: n.id });
+        pushAlert(cur, 'Order completed — sale added to your wallet'); changed = true;
+      }
+      // ---- V16: courier offers expire; bot customer answers a courier counter ----
+      if (!n.mine && n.myRole === 'driver' && n.status === 'driver_offer' && !n.expired && n.neg) {
+        if (n.neg.turn === 'me' && n.neg.deadline && now() > n.neg.deadline) {
+          n.expired = true; n.neg = null; n.updated = now(); pushAlert(cur, 'Delivery offer expired'); changed = true;
+        } else if (n.neg.turn === 'them' && age > 3) {
+          const ask = n.neg.amount;
+          if (ask <= n.fee * 1.6) {
+            n.fee = ask; n.neg = null; n.status = 'accepted'; pushAlert(cur, 'Customer accepted your fare of ₱' + ask);
+          } else {
+            n.neg = { ...n.neg, turn: 'me', amount: n.fee, deadline: now() + cur.settings.offerSecs * 1000,
+                      history: [...(n.neg.history || []), { by: 'customer', amount: n.fee, ts: now(), note: 'Customer kept the original fee' }] };
+            pushAlert(cur, 'Customer kept the original fee');
+          }
+          n.updated = now(); changed = true;
+        }
+      }
       if (!n.mine && n.myRole === 'driver' && n.status === 'delivered' && age > 5) {
         n.status = 'completed'; n.updated = now();
-        const earn = Math.round(n.fee * (1 - cur.settings.commissions.driverPct / 100));
-        const next = { ...cur };
-        next.wallet = { ...next.wallet };
-        next.wallet.credit = Math.round((next.wallet.credit + earn) * 100) / 100;
-        next.wallet.tx = [{ id: uid(), amount: earn, kind: 'delivery', orderId: n.id, ts: now() }, ...next.wallet.tx];
-        pushAlert(next, 'Delivered — earnings added to your wallet');
+        credits.push({ amount: Math.round(n.fee * (1 - cur.settings.commissions.driverPct / 100) * 100) / 100, kind: 'delivery', orderId: n.id });
+        pushAlert(cur, 'Delivered — earnings added to your wallet'); changed = true;
         return n;
       }
       return n;
@@ -171,23 +203,37 @@ export function StoreProvider({ children }) {
     const meVendorOn = cur.roles.vendor.status === 'approved' && cur.storeOpen;
     if ((meDriverOn || meVendorOn) && now() - (cur.lastBotAt || 0) > 45000) {
       const role = meVendorOn && (!meDriverOn || Math.random() > 0.5) ? 'vendor' : 'driver';
+      const POS = { lat: 14.5995, lng: 120.9842 };
+      const fee = 20 + Math.round(Math.random() * 40);
       const o = {
-        id: uid(), mine: false, myRole: role, kind: 'order',
+        id: uid(), mine: false, myRole: role, kind: 'order', demo: true,
         customer: BOT_CUSTOMERS[Math.floor(Math.random() * BOT_CUSTOMERS.length)],
         items: ITEMS[Math.floor(Math.random() * ITEMS.length)],
         pickup: 'Aling Nena Sari-sari, Brgy. Sta. Rosa', dropoff: 'Blk 4 Lot 12, Brgy. Malinis',
-        fee: 20 + Math.round(Math.random() * 40), price: 0, status: role === 'vendor' ? 'vendor_quote' : 'finding_driver',
+        pickupLat: POS.lat, pickupLng: POS.lng,
+        dropLat: POS.lat + (Math.random() - 0.5) * 0.03, dropLng: POS.lng + (Math.random() - 0.5) * 0.03,
+        fee, price: role === 'driver' ? Math.round(80 + Math.random() * 220) : 0,
+        status: role === 'vendor' ? 'vendor_quote' : 'driver_offer',
+        // a courier offer is only visible to Driver.js when neg.turn === 'me' (the old code never set it)
+        neg: role === 'driver' ? { phase: 'driver', turn: 'me', amount: fee, deadline: now() + cur.settings.offerSecs * 1000,
+                                   history: [{ by: 'customer', amount: fee, ts: now(), note: 'Customer fee offer' }] } : null,
         photos: {}, created: now(), updated: now(),
       };
       orders.unshift(o); cur.lastBotAt = now(); botSeed++;
       pushAlert(cur, role === 'vendor' ? 'New order for your store' : 'New delivery offer');
       changed = true;
     }
+    if (credits.length) {
+      const sum = credits.reduce((a, c) => a + c.amount, 0);
+      const wallet = { ...cur.wallet, balance: Math.round((cur.wallet.balance + sum) * 100) / 100,
+        tx: [...credits.map((c) => ({ id: uid(), amount: c.amount, kind: c.kind, orderId: c.orderId, ts: now() })), ...cur.wallet.tx] };
+      return { ...cur, orders, botSeed, wallet };
+    }
     return changed ? { ...cur, orders, botSeed } : cur;
   }
 
   function photo(by, kind) {
-    return { by, kind, ts: now(), uri: null, stamp: new Date().toLocaleString() + ' · GPS locked', simulated: true };
+    return { by, kind, ts: now(), uri: null, stamp: new Date().toLocaleString() + ' · demo', simulated: true };
   }
   function pushAlert(cur, text) {
     cur.alerts = [{ id: uid(), text, ts: now(), read: false }, ...(cur.alerts || [])].slice(0, 50);
@@ -385,7 +431,7 @@ export function StoreProvider({ children }) {
       return (cur.stores || []).filter((s) => s.active !== false);
     },
     signIn: (session) => setS((c) => ({ ...c, auth: session, activeRole: session.role === 'admin' ? 'admin' : 'customer' })),
-    signOut: () => setS((c) => ({ ...c, auth: null, terms: false, activeRole: 'customer' })),
+    signOut: () => { stopBgTracking(); setS((c) => ({ ...c, auth: null, terms: false, activeRole: 'customer', driverOnline: false })); },
     agreeTerms: () => setS((c) => ({ ...c, terms: true })),
     topUp: (amount) => setS((c) => {
       const n = { ...c }; n.wallet = { ...n.wallet };
@@ -435,18 +481,24 @@ export function StoreProvider({ children }) {
       ...c, orders: c.orders.map((o) => {
         if (o.id !== orderId) return o;
         const n = { ...o, updated: now() };
-        if (action === 'accept') { n.neg = null; n.status = 'accepted'; }
+        if (action === 'accept') {
+          const amt = n.neg ? n.neg.amount : null;
+          if (n.myRole === 'vendor') { if (amt != null) n.price = amt; n.status = 'awaiting_pack'; }
+          else { if (amt != null) n.fee = amt; n.status = 'accepted'; }
+          n.neg = null;
+        }
         if (action === 'refuse') { n.expired = true; n.neg = null; }
         if (action === 'counter') {
           n.neg = { ...n.neg, turn: 'them', amount,
-                    history: [...n.neg.history, { by: n.myRole, amount, ts: now(), note: 'Your counter' }] };
+                    history: [...((n.neg && n.neg.history) || []), { by: n.myRole, amount, ts: now(), note: 'Your counter' }] };
+          if (n.myRole === 'vendor') n.status = 'quote_sent';
         }
         return n;
       }),
     })),
     vendorQuote: (orderId, price, photoObj) => setS((c) => ({
       ...c, orders: c.orders.map((o) => o.id !== orderId ? o : {
-        ...o, price, photos: { ...o.photos, product: photoObj }, updated: now(),
+        ...o, price, photos: { ...o.photos, product: photoObj }, status: 'quote_sent', updated: now(),
         neg: { phase: 'vendor', turn: 'them', amount: price,
                history: [...(o.neg ? o.neg.history : []), { by: 'vendor', amount: price, ts: now(), note: 'Your quote + product photo' }] },
       }),
@@ -527,6 +579,8 @@ export function StoreProvider({ children }) {
       n.alerts = [{ id: uid(), text: '📣 ' + text, ts: now(), read: false }, ...(c.alerts || [])].slice(0, 50);
       return n; }),
     setName: (name) => setS((c) => ({ ...c, profile: { ...c.profile, name } })),
+    // V16: name + avatar (avatar = public Supabase Storage URL)
+    setProfile: (patch) => setS((c) => ({ ...c, profile: { ...c.profile, ...(patch || {}) } })),
     switchRole: (role) => setS((c) => {
       const next = { ...c, activeRole: role };
       if (role === 'vendor') {

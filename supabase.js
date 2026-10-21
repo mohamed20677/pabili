@@ -391,12 +391,5 @@ end $$;
 
 `;
 
-// ---------- Storage helpers ----------
-export async function uploadOrderPhoto(bucket, file) {
-  if (!supabase) return { simulated: true, uri: null };
-  const path = bucket + '/' + Date.now() + '-' + (file?.name || 'photo.jpg');
-  const { data, error } = await supabase.storage.from(bucket).upload(path, file, { contentType: 'image/jpeg' });
-  if (error) throw error;
-  const { publicUrl } = supabase.storage.from(bucket).getPublicUrl(path).data;
-  return { path, uri: publicUrl, ts: Date.now() };
-}
+// Photo upload lives in media.js (React Native safe). The old uploadOrderPhoto() was removed:
+// it expected a browser File, which does not exist in React Native.

@@ -1,6 +1,7 @@
 // Admin console — V9 adds Withdrawals, Stores, Drivers, plus the original tabs.
 import React, { useState } from 'react';
 import { ScrollView, Switch, View } from 'react-native';
+import { fetchRecentDrivers } from './tracking';
 import { C, ORDER_STATUS, peso, WITHDRAWAL_PROVIDERS } from './lib';
 import { useStore } from './store';
 import { Btn, Card, Field, Row, Section, Txt } from './ui';
@@ -10,6 +11,15 @@ export default function Admin() {
   const st = useStore();
   const { s } = st;
   const [tab, setTab] = useState('withdrawals');
+  const [liveDrivers, setLiveDrivers] = useState([]);
+  React.useEffect(() => {
+    if (tab !== 'drivers') return undefined;
+    let alive = true;
+    const load = async () => { const rows = await fetchRecentDrivers(10); if (alive) setLiveDrivers(rows); };
+    load();
+    const id = setInterval(load, 10000);
+    return () => { alive = false; clearInterval(id); };
+  }, [tab]);
   const [rejectReason, setRejectReason] = useState({});
   // V9 tabs — withdrawals first because admin's #1 day-to-day action.
   const tabs = [
@@ -83,7 +93,9 @@ export default function Admin() {
               <Card key={k.id} style={{ marginTop: 10, opacity: k.status === 'pending' ? 1 : 0.6 }}>
                 <Txt b s={15}>{k.name} — {k.role}</Txt>
                 <Txt s={11} c={C.mute}>{new Date(k.ts).toLocaleString()} · {k.status}</Txt>
-                {Object.entries(k.data || {}).map(([kk, v]) => <Txt key={kk} s={12} style={{ marginTop: 3 }}>• {kk}: {String(v)}</Txt>)}
+                {Object.entries(k.data || {}).map(([kk, v]) => (/^https?:\/\//.test(String(v))
+                  ? <View key={kk}>{photoBubble({ uri: String(v), kind: kk, stamp: '' })}</View>
+                  : <Txt key={kk} s={12} style={{ marginTop: 3 }}>• {kk}: {String(v)}</Txt>))}
                 {k.status === 'pending' && (
                   <View style={{ flexDirection: 'row', marginTop: 8 }}>
                     <Btn small title="Approve ✓" onPress={() => st.adminDecideKyc(k.id, true)} style={{ flex: 1, marginRight: 8 }} />
@@ -149,13 +161,12 @@ export default function Admin() {
         {tab === 'drivers' && (
           <View>
             <Txt b s={16}>Drivers ({s.users.filter((u) => u.role === 'driver').length})</Txt>
-            {Object.entries(st.listDriverLocations ? st.listDriverLocations() : {}).length === 0
-              ? <Txt s={11} c={C.mute}>No live driver points yet — driver app must be foregrounded to upload GPS (browser limitation).</Txt>
-              : null}
-            {Object.entries((st.listDriverLocations && st.listDriverLocations()) || {}).map(([id, p]) => (
-              <Card key={id} style={{ marginTop: 10 }}>
-                <Txt b s={13}>🚗 {id}</Txt>
-                <Txt s={11} c={C.mute}>{p.lat.toFixed(4)}, {p.lng.toFixed(4)} · {p.source === 'bg' ? 'background' : 'foreground'} · {new Date(p.ts).toLocaleString()}</Txt>
+            <Txt s={11} c={C.mute} style={{ marginTop: 4 }}>Live points published by courier phones in the last 10 min (Supabase, refreshes every 10 s).</Txt>
+            {liveDrivers.length === 0 && <Txt s={11} c={C.mute} style={{ marginTop: 6 }}>No courier is sharing a location right now.</Txt>}
+            {liveDrivers.map((p) => (
+              <Card key={p.driver_phone} style={{ marginTop: 10 }}>
+                <Txt b s={13}>🚗 {p.driver_phone}</Txt>
+                <Txt s={11} c={C.mute}>{Number(p.lat).toFixed(4)}, {Number(p.lng).toFixed(4)} · {p.source === 'bg' ? 'background' : 'foreground'} · {new Date(p.updated_at).toLocaleTimeString()}</Txt>
               </Card>
             ))}
           </View>

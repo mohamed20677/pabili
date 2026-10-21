@@ -1,20 +1,39 @@
 // Customer screens for V9: home, store list, cart, single+multi order, addresses.
 // Extends V8 without breaking save/query invariants.
 import React, { useState } from 'react';
-import { Linking, Pressable, ScrollView, View } from 'react-native';
+import { Image, Linking, Modal, Pressable, ScrollView, View } from 'react-native';
 import { C, CATEGORIES, CATEGORY_ICONS, ORDER_STATUS, peso, useT } from './lib';
 import { useStore } from './store';
+import { fetchRecentDrivers } from './tracking';
 import { Btn, Card, Chip, Countdown, Field, Section, Txt } from './ui';
 
-export function photoBubble(p) {
+// V16: real photos render as an image (tap to zoom). Photos from the local demo engine are
+// flagged "demo" instead of pretending to be proof.
+export function PhotoBubble({ p }) {
+  const [open, setOpen] = useState(false);
   if (!p) return null;
+  const real = !!p.uri;
   return (
     <View style={{ backgroundColor: '#EAF3EF', borderRadius: 12, padding: 10, marginTop: 8, borderWidth: 1, borderColor: C.green }}>
-      <Txt s={13} b c={C.green}>📷 {p.kind} — photo proof</Txt>
-      <Txt s={10} c={C.mute}>{p.stamp}</Txt>
+      <Txt s={13} b c={C.green}>📷 {p.kind} — photo proof{real ? '' : ' (demo, simulated)'}</Txt>
+      {real && (
+        <Pressable onPress={() => setOpen(true)}>
+          <Image source={{ uri: p.uri }} resizeMode="cover" style={{ width: '100%', height: 170, borderRadius: 10, marginTop: 6, backgroundColor: C.line }} />
+        </Pressable>
+      )}
+      <Txt s={10} c={C.mute} style={{ marginTop: 4 }}>{p.stamp}</Txt>
+      {real && (
+        <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+          <Pressable onPress={() => setOpen(false)} style={{ flex: 1, backgroundColor: '#000', justifyContent: 'center' }}>
+            <Image source={{ uri: p.uri }} resizeMode="contain" style={{ width: '100%', height: '85%' }} />
+            <Txt c="#fff" s={12} style={{ textAlign: 'center', marginTop: 8 }}>Tap anywhere to close</Txt>
+          </Pressable>
+        </Modal>
+      )}
     </View>
   );
 }
+export function photoBubble(p) { return <PhotoBubble p={p} />; }
 
 export function PhotoTimeline({ o }) {
   const steps = [['product', '📦'], ['packed', '✅'], ['pickup', '🛵'], ['delivery', '🏠']];
@@ -36,18 +55,25 @@ export function PhotoTimeline({ o }) {
   );
 }
 
-// V9: per-order live driver banner.
+// V16: live courier banner — reads the freshest points the courier phones publish to Supabase
+// (driver_locations), polling every 10 s. Falls back to the local sample.
 export function DriverLocationBanner({ o }) {
   const { listDriverLocations } = useStore();
-  const all = listDriverLocations();
-  // Match by assigned driver (string) or fall back to first location for demo.
-  const match = (() => {
-    if (!o || !o.driver) return null;
-    const candidates = Object.keys(all);
-    // Try fuzzy match: driver string vs user id  ('Maria Santos' has 'u_d1':'Juan Dela Cruz',etc)
-    const guess = candidates.find((k) => (all[k].ts && all[k].ts > Date.now() - 5 * 60 * 1000));
-    return guess ? all[guess] : all[candidates[0]];
+  const [remote, setRemote] = useState(null);
+  React.useEffect(() => {
+    let alive = true;
+    const load = async () => { const rows = await fetchRecentDrivers(5); if (alive) setRemote(rows[0] || null); };
+    load();
+    const id = setInterval(load, 10000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+  const local = (() => {
+    const all = listDriverLocations(); const k = Object.keys(all).find((x) => all[x].ts && all[x].ts > Date.now() - 5 * 60 * 1000);
+    return k ? all[k] : null;
   })();
+  const match = remote
+    ? { lat: Number(remote.lat), lng: Number(remote.lng), source: remote.source, ts: new Date(remote.updated_at).getTime() }
+    : local;
   if (!match) return (
     <View style={{ marginTop: 8, padding: 8, borderRadius: 12, backgroundColor: '#EAF3EF' }}>
       <Txt s={11} c={C.mute}>📡 Driver hasn't shared live location yet</Txt>

@@ -10,6 +10,7 @@ import { wireSupabaseSession, SUPABASE_ENABLED } from './supabase';
 import { initPush } from './notifications';
 import { LangCtx, C } from './lib';
 import { StoreProvider, useStore } from './store';
+import { ensureProfile, loadProfileRemote } from './api';
 import { PhoneScreen, OtpScreen, TermsScreen } from './Auth';
 import { HomeScreen, OrderForm, OrdersTab, StoresByCategory, AddressesScreen, CartScreen } from './Customer';
 import Profile, { AlertsTab } from './Profile';
@@ -19,7 +20,7 @@ import Admin from './Admin';
 import BottomNav from './BottomNav';
 
 function Shell() {
-  const { s, signIn, agreeTerms, placeCartOrder } = useStore();
+  const { s, signIn, agreeTerms, placeCartOrder, setProfile } = useStore();
   const [digits, setDigits] = useState('');
   const [step, setStep] = useState('phone'); // phone | otp
   const [tab, setTab] = useState('home');
@@ -29,6 +30,19 @@ function Shell() {
   const [storesCat, setStoresCat] = useState(null);
   const [cartOpen, setCartOpen] = useState(false);
   const [addrOpen, setAddrOpen] = useState(false);
+
+  // V16: make sure the cloud profile row exists, then restore name + photo (e.g. after a reinstall)
+  React.useEffect(() => {
+    const phone = s.auth && s.auth.phone;
+    if (!phone || s.auth.role === 'admin') return undefined;
+    let alive = true;
+    (async () => {
+      await ensureProfile(phone);
+      const r = await loadProfileRemote(phone);
+      if (alive && r) setProfile({ ...(r.name ? { name: r.name } : {}), ...(r.avatar_url ? { avatar: r.avatar_url } : {}) });
+    })();
+    return () => { alive = false; };
+  }, [s.auth && s.auth.phone]);
 
   if (!s.auth) {
     return (

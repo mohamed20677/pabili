@@ -1,5 +1,5 @@
 // V9 high-level API: same Supabase-or-Local split; added withdrawal/cart helpers.
-import { supabase, SUPABASE_ENABLED, SCHEMA_SQL, uploadOrderPhoto } from './supabase';
+import { supabase, SUPABASE_ENABLED, SCHEMA_SQL } from './supabase';
 import { registerPush, notify, PUSH_KEY_GUIDE } from './notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -75,9 +75,31 @@ export async function adminAdjustWallet(targetPhone, amount, reason, byPhone) {
   return { ok: false };
 }
 
+// V16: profile sync (name + avatar) and making sure a profiles row exists (driver_locations,
+// kyc_requests, orders all reference profiles(phone)).
+export async function ensureProfile(phone) {
+  if (!SUPABASE_ENABLED || !phone) return;
+  try { await supabase.from('profiles').upsert({ phone }, { onConflict: 'phone', ignoreDuplicates: true }); } catch (e) { /* offline */ }
+}
+export async function loadProfileRemote(phone) {
+  if (!SUPABASE_ENABLED || !phone) return null;
+  try {
+    const { data } = await supabase.from('profiles').select('name,avatar_url').eq('phone', phone).maybeSingle();
+    return data || null;
+  } catch (e) { return null; }
+}
+export async function saveProfileRemote(phone, patch) {
+  if (!SUPABASE_ENABLED || !phone) return { ok: false, error: 'offline' };
+  const { error } = await supabase.from('profiles').upsert({ phone, ...patch }, { onConflict: 'phone' });
+  if (error) {
+    const m = String(error.message || error);
+    throw new Error(/avatar_url/.test(m) ? 'Column avatar_url is missing — run pabili-sql/setup-04-v16.sql in Supabase.' : m);
+  }
+  return { ok: true };
+}
+
 export const backend = {
   enabled: SUPABASE_ENABLED,
   schemaSql: SCHEMA_SQL,
-  uploadOrderPhoto,
   pushKeyGuide: PUSH_KEY_GUIDE,
 };

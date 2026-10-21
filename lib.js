@@ -94,6 +94,8 @@ export const ORDER_STATUS = {
   accepted: 'Courier accepted — store is preparing', ready_pickup: 'Ready for pickup',
   picked_up: 'On the way', delivered: 'Delivered — please confirm',
   completed: 'Completed', cancelled: 'Cancelled', disputed: 'Under admin review',
+  driver_offer: 'Courier offer', vendor_talk: 'Negotiating price', quote_sent: 'Quote sent — waiting for customer',
+  awaiting_pack: 'Quote agreed — pack the order', handover_done: 'Handed to courier',
 };
 export const PHOTO_STEPS = [
   { key: 'product', by: 'vendor', label: 'Actual product photo' },
@@ -126,11 +128,20 @@ export const WITHDRAWAL_STATUS = {
 export const WITHDRAWAL_DAILY_CAP_GLOBAL = 1000000;
 export const WITHDRAWAL_LIMITS = { max_per_request: 50000, max_concurrent_pending: 3 };
 
-// Background-geo honest disclaimer (read by Customer.js + Driver.js:
+// Background tracking (V16): real on the Android APK via a foreground service (expo-task-manager).
 export const BG_GEO = {
-  // The web version cannot run a foreground watcher with the screen locked —
-  // we promise no more than that, and we mark every "live" GPS read with
-  // whether it came from foreground watchPosition or a capacity-tracked tick.
-  webLimitation: 'Browsers halt watchPosition when the page is backgrounded.',
-  apkPath: 'Capacitor/Expo Dev Build can run expo-task-manager + expo-location for true background updates.',
+  info: 'While you are online, a notification keeps location sharing alive even with the screen locked.',
+  needAlways: 'Location must be set to "Allow all the time" for tracking with the screen locked.',
 };
+
+// Straight-line distance in km (haversine). Returns null if any coordinate is missing.
+export function distanceKm(a, b) {
+  if (!a || !b || a.lat == null || a.lng == null || b.lat == null || b.lng == null) return null;
+  const R = 6371, rad = (x) => (x * Math.PI) / 180;
+  const dLat = rad(b.lat - a.lat), dLng = rad(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+export const fmtKm = (k) => (k == null ? '—' : k < 1 ? Math.round(k * 1000) + ' m' : k.toFixed(1) + ' km');
+// Opens Google Maps turn-by-turn (no API key / native map module needed).
+export const navUrl = (lat, lng) => `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
