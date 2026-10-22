@@ -34,7 +34,7 @@ export function mapOrder(r, me) {
     customer: r.customer_name || r.customer_phone, customerPhone: r.customer_phone,
     vendorPhone: r.vendor_phone, driverPhone: r.driver_phone, driver: r.driver_name, driverVehicle: r.driver_vehicle,
     payVia: r.pay_via || 'cash', offerTo: r.offer_to, offerDeadline: ms(r.offer_deadline),
-    declined: r.declined || [], settled: !!r.settled, created: ms(r.created_at), updated: ms(r.updated_at), expired: false,
+    budget: num(r.budget), declined: r.declined || [], settled: !!r.settled, created: ms(r.created_at), updated: ms(r.updated_at), expired: false,
   };
 }
 const mkNeg = (phase, awaiting, amount, by, note, prev, extra) => ({
@@ -128,6 +128,12 @@ export async function vendorRespond(o, action, amount) {
     negotiation: mkNeg('vendor', 'customer', keep, 'vendor', 'Store keeps its price (final)', o.neg, { final: true }) });
 }
 export async function customerQuote(o, action, amount) {
+  if (o.kind === 'errand') { // the courier is the one who found the item: approving it = "go ahead and buy it"
+    if (action === 'accept') return guarded(o.id, ['quote_review'], { price: o.neg.amount, status: 'ready_pickup', negotiation: null, awaiting: null });
+    if (action === 'counter') return guarded(o.id, ['quote_review'], { status: 'vendor_talk', awaiting: 'driver',
+      negotiation: mkNeg('shopper', 'driver', amount, 'customer', 'Customer counter', o.neg) });
+    return cancelOrderCloud(o);
+  }
   if (action === 'accept') return guarded(o.id, ['quote_review'], { price: o.neg.amount, status: 'finding_driver', negotiation: null, awaiting: null, declined: [] });
   if (action === 'counter') return guarded(o.id, ['quote_review'], { status: 'vendor_talk', awaiting: 'vendor',
     negotiation: mkNeg('vendor', 'vendor', amount, 'customer', 'Customer counter', o.neg) });
@@ -136,6 +142,34 @@ export async function customerQuote(o, action, amount) {
 export const vendorPacked = (o, photo) => guarded(o.id, ['accepted'], { status: 'ready_pickup', photos: { ...o.photos, packed: photo } });
 export const driverPickup = (o, me, photo) => guarded(o.id, ['ready_pickup'], { status: 'picked_up', photos: { ...o.photos, pickup: photo } }, { driver_phone: me });
 export const driverDeliver = (o, me, photo) => guarded(o.id, ['picked_up'], { status: 'delivered', photos: { ...o.photos, delivery: photo } }, { driver_phone: me });
+
+// ---------------------------------------------------------------- errands: a courier buys it at ANY shop
+// customer asks → courier accepts the delivery fee → courier sends the item photo + price → customer approves
+// (or counters) BEFORE anything is bought → courier buys, photographs, delivers.
+export async function placeErrandCloud({ me, myName, text, hint, budget, fee, payVia, dropoff }) {
+  const { data, error } = await supabase.from('orders').insert({
+    kind: 'errand', category: 'Errand', customer_phone: me, customer_name: myName, items: text,
+    pickup_addr: hint || 'Any shop near you — the courier chooses',
+    pickup_lat: dropoff.lat || null, pickup_lng: dropoff.lng || null,   // ranks couriers by distance to the customer
+    dropoff_addr: dropoff.addr, dropoff_lat: dropoff.lat || null, dropoff_lng: dropoff.lng || null,
+    fee, price: 0, budget: budget || null, status: 'finding_driver', pay_via: payVia, photos: {}, declined: [],
+  }).select().single();
+  if (error) throw error;
+  return data;
+}
+export const shopperQuote = (o, me, price, photo) => guarded(o.id, ['accepted'], {
+  price, photos: { ...o.photos, product: photo }, status: 'quote_review', awaiting: 'customer',
+  negotiation: mkNeg('shopper', 'customer', price, 'driver', 'Item price + photo from the shop', null),
+}, { driver_phone: me });
+export async function shopperRespond(o, me, action, amount) {
+  const last = [...((o.neg && o.neg.history) || [])].reverse().find((h) => h.by === 'driver');
+  const keep = last ? last.amount : o.price;
+  if (action === 'accept') return guarded(o.id, ['vendor_talk'], { price: o.neg.amount, status: 'ready_pickup', negotiation: null, awaiting: null }, { driver_phone: me });
+  if (action === 'counter') return guarded(o.id, ['vendor_talk'], { price: amount, status: 'quote_review', awaiting: 'customer',
+    negotiation: mkNeg('shopper', 'customer', amount, 'driver', 'Courier counter', o.neg) }, { driver_phone: me });
+  return guarded(o.id, ['vendor_talk'], { price: keep, status: 'quote_review', awaiting: 'customer',
+    negotiation: mkNeg('shopper', 'customer', keep, 'driver', 'Courier keeps the price (final)', o.neg, { final: true }) }, { driver_phone: me });
+}
 
 // ---------------------------------------------------------------- rides (no vendor, no photos)
 export async function placeRideCloud({ me, myName, pickup, dest, fee, note, payVia }) {
@@ -175,10 +209,11 @@ export async function customerDriverAnswer(o, action, amount, settings) {
   return guarded(o.id, ['driver_talk'], { status: 'finding_driver', offer_to: null, offer_deadline: null,
     declined: [...o.declined, o.offerTo], negotiation: null, awaiting: null });
 }
-export const driverCancel = (o, me) => guarded(o.id, o.kind === 'ride' ? ['accepted', 'ready_pickup'] : ['accepted'], {
+export const driverCancel = (o, me) => guarded(o.id, o.kind === 'ride' ? ['accepted', 'ready_pickup'] : o.kind === 'errand' ? ['accepted', 'quote_review', 'vendor_talk'] : ['accepted'], {
+  ...(o.kind === 'errand' ? { price: 0 } : {}),
   status: 'finding_driver', driver_phone: null, driver_name: null, driver_vehicle: null, offer_to: null, offer_deadline: null,
   declined: [...o.declined, me], negotiation: null, awaiting: null }, { driver_phone: me });
-export const cancelOrderCloud = (o) => guarded(o.id, o.kind === 'ride' ? [...OPEN_FOR_CANCEL, 'accepted', 'ready_pickup'] : OPEN_FOR_CANCEL, { status: 'cancelled', negotiation: null, awaiting: null, offer_to: null, offer_deadline: null });
+export const cancelOrderCloud = (o) => guarded(o.id, o.kind === 'ride' ? [...OPEN_FOR_CANCEL, 'accepted', 'ready_pickup'] : o.kind === 'errand' ? [...OPEN_FOR_CANCEL, 'accepted'] : OPEN_FOR_CANCEL, { status: 'cancelled', negotiation: null, awaiting: null, offer_to: null, offer_deadline: null });
 export const disputeOrder = (o) => guarded(o.id, ['picked_up', 'delivered'], { status: 'disputed' });
 export async function confirmOrder(o) {
   const { data, error } = await supabase.rpc('settle_order', { p_order: o.id });

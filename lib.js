@@ -133,7 +133,13 @@ export const RIDE_STATUS = {
   accepted: 'Driver is on the way to you', ready_pickup: 'Your driver has arrived', picked_up: 'Trip in progress',
   delivered: 'Arrived — please confirm', completed: 'Trip completed', cancelled: 'Cancelled', disputed: 'Under admin review',
 };
-export const statusText = (o) => ((o.kind === 'ride' ? RIDE_STATUS : ORDER_STATUS)[o.status] || o.status);
+export const ERRAND_STATUS = {
+  finding_driver: 'Finding a courier', driver_offer: 'Offer sent to a courier', driver_talk: 'Courier suggested another fee',
+  accepted: 'Courier is going to the shop', quote_review: 'Review the price & photo', vendor_talk: 'Negotiating the item price',
+  ready_pickup: 'Approved — courier is buying it', picked_up: 'On the way to you', delivered: 'Delivered — please confirm',
+  completed: 'Completed', cancelled: 'Cancelled', disputed: 'Under admin review',
+};
+export const statusText = (o) => ((o.kind === 'ride' ? RIDE_STATUS : o.kind === 'errand' ? ERRAND_STATUS : ORDER_STATUS)[o.status] || o.status);
 // Google Maps link: exact point when we have coordinates, otherwise a text search of the address.
 export const mapsUrl = (lat, lng, text) => (lat != null && lng != null
   ? `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`

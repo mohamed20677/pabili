@@ -68,12 +68,13 @@ export function DriverLocationBanner({ o }) {
   const box = { marginTop: 8, padding: 10, borderRadius: 12, backgroundColor: '#EAF3EF' };
   if (!loc) return <View style={box}><Txt s={11} c={C.mute}>📡 Waiting for the {o.kind === 'ride' ? 'driver' : 'courier'}'s location…</Txt></View>;
   const age = Math.round((Date.now() - new Date(loc.updated_at).getTime()) / 1000);
-  const toPickup = o.status === 'accepted' || o.status === 'ready_pickup';
+  const errand = o.kind === 'errand';
+  const toPickup = !errand && (o.status === 'accepted' || o.status === 'ready_pickup');
   const km = distanceKm({ lat: Number(loc.lat), lng: Number(loc.lng) }, toPickup ? { lat: o.pickupLat, lng: o.pickupLng } : { lat: o.dropLat, lng: o.dropLng });
   return (
     <View style={box}>
       <Txt b s={13} c={C.green}>📡 {o.kind === 'ride' ? 'Driver' : 'Courier'} location — {loc.source === 'bg' ? 'live' : 'app open'}</Txt>
-      <Txt s={11}>{km != null ? fmtKm(km) + (toPickup ? ' from the pickup point · ' : ' from the destination · ') : ''}updated {age < 60 ? age + 's' : Math.round(age / 60) + ' min'} ago{age > 120 ? ' ⚠️' : ''}</Txt>
+      <Txt s={11}>{km != null ? fmtKm(km) + (errand ? ' from your address · ' : toPickup ? ' from the pickup point · ' : ' from the destination · ') : ''}updated {age < 60 ? age + 's' : Math.round(age / 60) + ' min'} ago{age > 120 ? ' ⚠️' : ''}</Txt>
       <Btn small kind="ghost" title="🗺 See on map" onPress={() => Linking.openURL(`https://www.google.com/maps?q=${loc.lat},${loc.lng}`)} />
     </View>
   );
@@ -311,9 +312,12 @@ export function HomeScreen({ goNew, goStores, goCart, goRide }) {
 }
 
 export function OrderForm({ preselectStore, onClose, onPlaced }) {
-  const { s, placeOrder, listStoresAll } = useStore();
+  const { s, placeOrder, placeErrand, listStoresAll } = useStore();
   const T = useT();
+  const [mode, setMode] = useState(preselectStore ? 'store' : 'errand'); // errand = a courier buys it at ANY shop
   const [text, setText] = useState('');
+  const [hint, setHint] = useState('');
+  const [budget, setBudget] = useState('');
   const [fee, setFee] = useState('20');
   const [pay, setPay] = useState('cash');
   const [store, setStore] = useState(preselectStore || null);
@@ -321,9 +325,13 @@ export function OrderForm({ preselectStore, onClose, onPlaced }) {
   const f = Number(fee) || 0;
   const addr = (s.addresses || []).find((a) => a.default) || (s.addresses || [])[0];
   const stores = listStoresAll();
+  const errand = mode === 'errand';
   const place = async () => {
     setBusy(true);
-    const ok = await placeOrder({ text: text.trim(), fee: f, payVia: pay, storeId: store.id, dropoff: { addr: addr.addr, lat: addr.lat, lng: addr.lng } });
+    const dropoff = { addr: addr.addr, lat: addr.lat, lng: addr.lng };
+    const ok = errand
+      ? await placeErrand({ text: text.trim(), hint: hint.trim(), budget: Number(budget) || null, fee: f, payVia: pay, dropoff })
+      : await placeOrder({ text: text.trim(), fee: f, payVia: pay, storeId: store.id, dropoff });
     setBusy(false);
     if (ok) { if (onPlaced) onPlaced(); onClose(); }
   };
@@ -332,35 +340,53 @@ export function OrderForm({ preselectStore, onClose, onPlaced }) {
     <ScrollView style={{ flex: 1, backgroundColor: '#fff' }} keyboardShouldPersistTaps="handled">
       <View style={{ backgroundColor: C.greenDk, padding: 18, paddingTop: 12, borderBottomLeftRadius: 24, borderBottomRightRadius: 24 }}>
         <Pressable onPress={onClose}><Txt c="#fff" s={22}>✕</Txt></Pressable>
-        <Txt b s={20} c="#fff" style={{ marginTop: 8 }}>🛍 {store ? store.name : 'New order'}</Txt>
+        <Txt b s={20} c="#fff" style={{ marginTop: 8 }}>{errand ? '🧭 Buy it for me' : '🛍 ' + (store ? store.name : 'Order from a store')}</Txt>
+        <Txt s={12} c="#fff" style={{ opacity: 0.9 }}>{errand ? 'A courier buys it at any shop, shows you the item and price, and only buys after you approve.' : 'A registered store quotes you, then a courier delivers.'}</Txt>
       </View>
       <View style={{ padding: 16 }}>
-        <Section title="1 · Store">
-          {stores.length === 0 && <Card><Txt s={13} c={C.mute}>No store is open in the app yet. Stores appear here once an owner registers (My Page → Register my store) and the admin approves it.</Txt></Card>}
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-            {stores.map((x) => (
-              <Pressable key={x.id} onPress={() => setStore(x)} style={chip(store && store.id === x.id)}>
-                <Txt s={13} b={store && store.id === x.id}>{CATEGORY_ICONS[x.category] || '🏪'} {x.name}</Txt>
-              </Pressable>
-            ))}
-          </View>
-          {store && <Txt s={11} c={C.mute}>📍 {store.address || store.area}</Txt>}
-        </Section>
-        <Section title="2 · What do you need?">
+        <View style={{ flexDirection: 'row', marginBottom: 6 }}>
+          <Pressable onPress={() => setMode('errand')} style={chip(errand)}><Txt s={13} b={errand}>🧭 Any shop — courier buys it</Txt></Pressable>
+          <Pressable onPress={() => setMode('store')} style={chip(!errand)}><Txt s={13} b={!errand}>🏪 A registered store</Txt></Pressable>
+        </View>
+
+        {!errand && (
+          <Section title="1 · Store">
+            {stores.length === 0 && <Card><Txt s={13} c={C.mute}>No store is open in the app yet. Use "Any shop — courier buys it", or wait for stores to register.</Txt></Card>}
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+              {stores.map((x) => (
+                <Pressable key={x.id} onPress={() => setStore(x)} style={chip(store && store.id === x.id)}>
+                  <Txt s={13} b={store && store.id === x.id}>{CATEGORY_ICONS[x.category] || '🏪'} {x.name}</Txt>
+                </Pressable>
+              ))}
+            </View>
+            {store && <Txt s={11} c={C.mute}>📍 {store.address || store.area}</Txt>}
+          </Section>
+        )}
+
+        <Section title={errand ? '1 · What should the courier buy?' : '2 · What do you need?'}>
           <Field multiline numberOfLines={4} value={text} onChangeText={setText} placeholder={T('describe')} style={{ minHeight: 100, textAlignVertical: 'top' }} />
         </Section>
+        {errand && (
+          <Section title="2 · Where? (optional)">
+            <Field value={hint} onChangeText={setHint} placeholder="Shop name or area, e.g. Mercury Drug, Brgy. Poblacion" />
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
+              <Field value={budget} onChangeText={(v) => setBudget(v.replace(/[^0-9]/g, ''))} keyboardType="number-pad" placeholder="Budget ₱ (optional)" style={{ width: 170 }} />
+              <Txt s={11} c={C.mute} style={{ marginLeft: 10, flex: 1 }}>The courier sees it; you still approve the real price first.</Txt>
+            </View>
+          </Section>
+        )}
         <Section title={T('deliverTo')}>
           {addr ? (
             <Card>
               <Txt b s={14}>🏠 {addr.label || 'Home'} — <Txt s={12} c={C.mute}>{addr.addr}</Txt></Txt>
-              {addr.lat ? <Txt s={11} c={C.mute}>📍 {addr.lat.toFixed(4)}, {addr.lng.toFixed(4)}</Txt> : null}
+              {addr.lat ? <Txt s={11} c={C.mute}>📍 {addr.lat.toFixed(4)}, {addr.lng.toFixed(4)}</Txt> : <Txt s={11} c={C.amber}>Tip: save this address with "Use my current location" so couriers can find you.</Txt>}
             </Card>
           ) : <Card><Txt s={13} c={C.bad}>Add a delivery address first (My Page → Saved addresses).</Txt></Card>}
         </Section>
-        <Section title={T('feeOffer')}>
+        <Section title={errand ? '3 · Courier fee (delivery only)' : T('feeOffer')}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Field value={fee} onChangeText={(v) => setFee(v.replace(/[^0-9]/g, ''))} keyboardType="number-pad" style={{ width: 110, textAlign: 'center', fontSize: 22, fontWeight: '800' }} />
-            <Txt s={13} c={C.mute} style={{ marginLeft: 12, flex: 1 }}>delivery only — the courier can accept or counter, and you decide</Txt>
+            <Txt s={13} c={C.mute} style={{ marginLeft: 12, flex: 1 }}>the courier can accept or counter, and you decide{errand ? '. The items are paid on top, at the approved price.' : ''}</Txt>
           </View>
         </Section>
         <Section title="Pay with">
@@ -369,7 +395,8 @@ export function OrderForm({ preselectStore, onClose, onPlaced }) {
             <Pressable onPress={() => setPay('wallet')} style={chip(pay === 'wallet')}><Txt s={13} b={pay === 'wallet'}>👛 Wallet ({peso(s.wallet.balance)})</Txt></Pressable>
           </View>
         </Section>
-        <Btn title={T('placeOrder') + ' · ' + peso(f)} busy={busy} disabled={!store || !addr || !text.trim() || f <= 0} onPress={place} />
+        <Btn title={(errand ? '🧭 Send request' : T('placeOrder')) + ' · ' + peso(f)} busy={busy}
+             disabled={(!errand && !store) || !addr || !text.trim() || f <= 0} onPress={place} />
         <View style={{ height: 100 }} />
       </View>
     </ScrollView>
@@ -469,22 +496,23 @@ export function AddressesScreen({ onClose }) {
 function OrderCard({ o }) {
   const { s, customerConfirm, cancelOrder, dispute, quoteAnswer, driverAnswer } = useStore();
   const ride = o.kind === 'ride';
+  const errand = o.kind === 'errand';
   const bad = o.status === 'cancelled', good = o.status === 'completed';
-  const canCancel = ['vendor_quote', 'vendor_talk', 'finding_driver', 'driver_offer'].includes(o.status) || (ride && ['accepted', 'ready_pickup'].includes(o.status));
+  const canCancel = ['vendor_quote', 'vendor_talk', 'finding_driver', 'driver_offer'].includes(o.status) || (ride && ['accepted', 'ready_pickup'].includes(o.status)) || (errand && o.status === 'accepted');
   const who = ride ? 'driver' : 'courier';
   return (
     <Card style={{ marginBottom: 12 }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-        <Txt b s={15} style={{ flex: 1 }}>{ride ? '🚕 Ride' : o.storeName ? '🏪 ' + o.storeName : '🛍 ' + o.items}</Txt>
+        <Txt b s={15} style={{ flex: 1 }}>{ride ? '🚕 Ride' : errand ? '🧭 Errand' : o.storeName ? '🏪 ' + o.storeName : '🛍 ' + o.items}</Txt>
         <View style={{ backgroundColor: bad ? '#FDECEC' : good ? '#EAF3EF' : '#FBF7EC', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, maxWidth: '55%' }}>
           <Txt s={11} b c={bad ? C.bad : good ? C.green : C.amber}>{statusText(o)}</Txt>
         </View>
       </View>
       {ride
         ? <Txt s={12} style={{ marginTop: 4 }}>📍 {o.pickup}{'\n'}🏁 {o.dropoff}</Txt>
-        : <Txt s={12} style={{ marginTop: 4 }}>{o.items}</Txt>}
+        : <Txt s={12} style={{ marginTop: 4 }}>{o.items}{errand && o.budget ? '\n💡 Budget ' + peso(o.budget) : ''}</Txt>}
       <Txt s={11} c={C.mute} style={{ marginTop: 4 }}>
-        {ride ? 'Fare ' + peso(o.fee) : 'Delivery ' + peso(o.fee) + (o.price ? ' · items ' + peso(o.price) + ' · total ' + peso(o.fee + o.price) : '')} · {o.payVia === 'wallet' ? '👛 wallet' : '💵 cash'}
+        {ride ? 'Fare ' + peso(o.fee) : (errand ? 'Courier fee ' : 'Delivery ') + peso(o.fee) + (o.price ? ' · items ' + peso(o.price) + ' · total ' + peso(o.fee + o.price) : '')} · {o.payVia === 'wallet' ? '👛 wallet' : '💵 cash'}
       </Txt>
 
       {!ride && <PhotoTimeline o={o} />}
@@ -492,12 +520,15 @@ function OrderCard({ o }) {
 
       {!ride && o.status === 'vendor_quote' && <Txt s={12} c={C.mute} style={{ marginTop: 8 }}>⏳ Waiting for the store to confirm stock and price…</Txt>}
       {!ride && o.status === 'quote_review' && o.neg && (
-        <NegotiationBox title="🧾 The store's price (see the photo above)" amount={o.neg.amount}
-          note={o.neg.final ? 'The store will not go lower.' : 'Accept it, or make a counter-offer.'} canCounter={!o.neg.final}
+        <NegotiationBox title={errand ? '🧾 Your courier found it — price (see the photo above)' : "🧾 The store's price (see the photo above)"} amount={o.neg.amount}
+          note={(o.neg.final ? (errand ? 'The courier will not go lower.' : 'The store will not go lower.') : 'Accept it, or make a counter-offer.') + (errand && o.budget && o.neg.amount > o.budget ? ' ⚠️ Above your budget of ' + peso(o.budget) + '.' : '') + (errand ? ' Nothing is bought until you accept.' : '')}
+          canCounter={!o.neg.final}
           onAccept={() => quoteAnswer(o, 'accept')} onCounter={(a) => quoteAnswer(o, 'counter', a)}
           onRefuse={() => cancelOrder(o)} refuseLabel="Cancel order" />
       )}
-      {!ride && o.status === 'vendor_talk' && <Txt s={12} c={C.mute} style={{ marginTop: 8 }}>⏳ Waiting for the store to answer your offer of {peso(o.neg ? o.neg.amount : 0)}…</Txt>}
+      {!ride && o.status === 'vendor_talk' && <Txt s={12} c={C.mute} style={{ marginTop: 8 }}>⏳ Waiting for the {errand ? 'courier' : 'store'} to answer your offer of {peso(o.neg ? o.neg.amount : 0)}…</Txt>}
+      {errand && o.status === 'accepted' && <Txt s={12} c={C.mute} style={{ marginTop: 8 }}>🛵 Your courier is heading to a shop. You will get the item photo and price to approve.</Txt>}
+      {errand && o.status === 'ready_pickup' && <Txt s={12} c={C.green} style={{ marginTop: 8 }}>✅ You approved {peso(o.price)} — your courier is buying it now.</Txt>}
 
       {o.status === 'finding_driver' && <Txt s={12} c={C.mute} style={{ marginTop: 8 }}>🔎 Looking for a {who} near you… keep the app open.</Txt>}
       {o.status === 'driver_offer' && (
@@ -513,14 +544,14 @@ function OrderCard({ o }) {
           onRefuse={() => driverAnswer(o, 'refuse')} refuseLabel={'Find another'} />
       )}
 
-      {o.driverPhone && ['accepted', 'ready_pickup', 'picked_up', 'delivered'].includes(o.status) && (
+      {o.driverPhone && ['accepted', 'quote_review', 'vendor_talk', 'ready_pickup', 'picked_up', 'delivered'].includes(o.status) && (
         <View style={{ marginTop: 8, padding: 10, borderRadius: 12, backgroundColor: '#EAF3EF' }}>
           <Txt b s={13}>{ride ? '🚕' : '🛵'} {o.driver || 'Your ' + who}</Txt>
           {o.driverVehicle ? <Txt s={12}>{o.driverVehicle}</Txt> : null}
           <Btn small kind="ghost" title="📞 Call" onPress={() => Linking.openURL('tel:' + o.driverPhone)} />
         </View>
       )}
-      {o.driverPhone && ['accepted', 'ready_pickup', 'picked_up'].includes(o.status) && <DriverLocationBanner o={o} />}
+      {o.driverPhone && ['accepted', 'quote_review', 'vendor_talk', 'ready_pickup', 'picked_up'].includes(o.status) && <DriverLocationBanner o={o} />}
 
       {o.status === 'delivered' && (
         <View>

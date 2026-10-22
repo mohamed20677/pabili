@@ -2,7 +2,7 @@
   "expo": {
     "name": "Pabili",
     "slug": "pabili-ph",
-    "version": "1.4.0",
+    "version": "1.5.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "platforms": [
@@ -20,7 +20,7 @@
     },
     "android": {
       "package": "com.pabili.ph",
-      "versionCode": 13,
+      "versionCode": 14,
       "permissions": [
         "INTERNET",
         "ACCESS_FINE_LOCATION",

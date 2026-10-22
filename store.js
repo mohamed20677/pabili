@@ -41,6 +41,7 @@ const errMsg = (e) => String((e && e.message) || e || 'Something went wrong');
 // What should this phone hear about when an order it is part of changes?
 function alertFor(o, prev) {
   const ride = o.kind === 'ride';
+  const errand = o.kind === 'errand';
   const changed = prev !== o.status;
   if (o.myRole === 'vendor') {
     if (!prev && o.status === 'vendor_quote') return '🛍 New order for your store';
@@ -51,16 +52,18 @@ function alertFor(o, prev) {
   if (o.myRole === 'driver') {
     if (o.status === 'driver_offer' && o.neg && o.neg.turn === 'me' && prev !== 'driver_offer') return ride ? '🚕 New ride request' : '🛵 New delivery offer';
     if (changed && prev === 'driver_talk' && o.status === 'accepted') return '✅ The customer accepted your fare';
+    if (changed && o.status === 'vendor_talk' && errand) return '💬 The customer countered your item price';
+    if (changed && o.status === 'ready_pickup' && errand) return '✅ Approved — go ahead and buy it';
     if (changed && o.status === 'ready_pickup' && !ride) return '📦 The store packed the order — go pick it up';
     if (changed && o.status === 'completed') return '✅ Paid — check your wallet';
     if (changed && o.status === 'cancelled') return 'Order cancelled by the customer';
   }
   if (o.myRole === 'customer' && changed) {
-    if (o.status === 'quote_review') return '🧾 The store sent its price and photo';
+    if (o.status === 'quote_review') return errand ? '🧾 Your courier found it — check the price and photo' : '🧾 The store sent its price and photo';
     if (o.status === 'finding_driver' && (prev === 'quote_review' || prev === 'vendor_talk')) return '👍 Price agreed — finding a courier';
     if (o.status === 'driver_talk' && o.neg) return `🛵 The ${ride ? 'driver' : 'courier'} asks ₱${o.neg.amount}`;
     if (o.status === 'accepted') return ride ? '🚕 A driver accepted — on the way to you' : '🛵 A courier accepted your order';
-    if (o.status === 'ready_pickup') return ride ? '📍 Your driver has arrived' : '📦 The store packed your order';
+    if (o.status === 'ready_pickup') return ride ? '📍 Your driver has arrived' : errand ? null : '📦 The store packed your order';
     if (o.status === 'picked_up') return ride ? '🚕 Trip started' : '🛵 Your order is on the way';
     if (o.status === 'delivered') return ride ? '🏁 You have arrived — please confirm' : '📬 Delivered — please confirm';
     if (o.status === 'cancelled') return 'Order cancelled';
@@ -251,6 +254,13 @@ export function StoreProvider({ children }) {
       if (!store) throw new Error('Choose a store first.');
       return C.placeOrderCloud({ me: me(), myName: cur.profile.name, store, text: d.text, fee: d.fee, payVia: d.payVia || 'cash', dropoff: d.dropoff });
     }),
+    placeErrand: (d) => run('Errand', async () => {
+      guardFrozen();
+      const cur = sRef.current;
+      return C.placeErrandCloud({ me: me(), myName: cur.profile.name, text: d.text, hint: d.hint, budget: d.budget, fee: d.fee, payVia: d.payVia || 'cash', dropoff: d.dropoff });
+    }),
+    shopperQuote: (o0, price, photo) => run('Price', () => C.shopperQuote(ord(o0), me(), price, photo)),
+    shopperRespond: (o0, action, amount) => run('Price', () => C.shopperRespond(ord(o0), me(), action, amount)),
     placeRide: (d) => run('Ride request', async () => {
       guardFrozen();
       const cur = sRef.current, r = cur.settings.ride;
