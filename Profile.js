@@ -62,7 +62,7 @@ export function WithdrawScreen({ onClose }) {
   const cfg = WITHDRAWAL_PROVIDERS[provider];
   const v = Number(amount.replace(/[^0-9]/g, '')) || 0;
   const net = Math.max(0, v - (cfg ? cfg.fee : 0));
-  const ok = v >= (cfg ? cfg.min : 100) && v + (cfg ? cfg.fee : 0) <= s.wallet.balance && account.length >= 4;
+  const ok = false; // payouts connect to GCash / Maya in the next update — the wallet itself is already real
   return (
     <View style={{ flex: 1, backgroundColor: C.paper }}>
       <View style={{ backgroundColor: C.greenDk, padding: 18, borderBottomLeftRadius: 24, borderBottomRightRadius: 24 }}>
@@ -95,7 +95,8 @@ export function WithdrawScreen({ onClose }) {
         <Card style={{ marginTop: 8 }}>
           <Txt s={12} c={C.mute}>Real rails require provider keys in Supabase Edge Function secrets. Until then the admin marks payouts as <Txt b>paid-stub</Txt> — nothing pretends money moved.</Txt>
         </Card>
-        <Btn title={ok ? `🔒 Hold ₱${v} + fee ₱${cfg.fee} and request approval` : 'Fill all fields to enable'}
+        <Card style={{ marginTop: 8, backgroundColor: '#FBF7EC' }}><Txt s={12}>Payouts are not connected yet. Your balance is real and safe in the wallet; withdrawals open in the next update.</Txt></Card>
+        <Btn title={'🔒 Withdraw — coming next update'}
              disabled={!ok} onPress={() => { requestWithdrawal(v, provider, account); onClose(); }} />
         <Section title="📜 Recent withdrawals">
           {(s.wallet.withdrawals || []).slice(0, 6).map((w) => (
@@ -191,7 +192,7 @@ function KycForm({ role, onDone }) {
             <DocBtn k="front" label="Storefront photo *" />
           </View>
         )}
-        <Btn title="Submit for review" disabled={!ready} onPress={() => { submitKyc(role, d); onDone(); }} />
+        <Btn title="Submit for review" disabled={!ready} onPress={async () => { const ok = await submitKyc(role, d); if (ok) onDone(); }} />
         <Btn kind="ghost" title="Back" onPress={onDone} />
       </Card>
       <View style={{ height: 100 }} />
@@ -265,7 +266,7 @@ function Pending({ role }) {
 }
 
 export default function Profile({ onOpenAddresses }) {
-  const { s, signOut, topUp, addCoupon, switchRole } = useStore();
+  const { s, signOut, addCoupon, switchRole } = useStore();
   const T = useT();
   const { lang, setLang } = React.useContext(LangCtx);
   const [dlg, setDlg] = useState(false);
@@ -286,6 +287,7 @@ export default function Profile({ onOpenAddresses }) {
     setDlg(false);
     if (role === 'customer') {
       if (s.roles.driver.status === 'approved') switchRole('driver');
+      else if (s.roles.driver.status === 'pending') Alert.alert('Driver application', 'Your driver documents are being reviewed by the admin. You will get an alert when approved.');
       else setKyc('driver');
     } else switchRole('customer');
   };
@@ -313,7 +315,7 @@ export default function Profile({ onOpenAddresses }) {
       <Row icon="👛" label={T('wallet')} right={
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <Txt b s={15}>{peso(s.wallet.balance)}</Txt>
-          <Btn small title="+ Add" onPress={() => topUp(100)} style={{ marginLeft: 10, marginTop: 0, paddingHorizontal: 14, paddingVertical: 6 }} />
+          <Txt s={10} c={C.mute} style={{ marginLeft: 8, maxWidth: 110 }}>Top-up: ask admin until online payment is connected</Txt>
         </View>} />
       <Row icon="💸" label={T('withdraw') + ' (PH rails)'} onPress={() => setWdOpen(true)}
            right={<Txt b s={13} c={C.green}>{peso(s.wallet.balance)} ›</Txt>} />

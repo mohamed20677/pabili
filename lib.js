@@ -128,6 +128,17 @@ export const WITHDRAWAL_STATUS = {
 export const WITHDRAWAL_DAILY_CAP_GLOBAL = 1000000;
 export const WITHDRAWAL_LIMITS = { max_per_request: 50000, max_concurrent_pending: 3 };
 
+export const RIDE_STATUS = {
+  finding_driver: 'Finding a driver near you', driver_offer: 'Offer sent to a driver', driver_talk: 'Driver suggested another fare',
+  accepted: 'Driver is on the way to you', ready_pickup: 'Your driver has arrived', picked_up: 'Trip in progress',
+  delivered: 'Arrived — please confirm', completed: 'Trip completed', cancelled: 'Cancelled', disputed: 'Under admin review',
+};
+export const statusText = (o) => ((o.kind === 'ride' ? RIDE_STATUS : ORDER_STATUS)[o.status] || o.status);
+// Google Maps link: exact point when we have coordinates, otherwise a text search of the address.
+export const mapsUrl = (lat, lng, text) => (lat != null && lng != null
+  ? `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`
+  : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(text || '')}`);
+
 // Background tracking (V16): real on the Android APK via a foreground service (expo-task-manager).
 export const BG_GEO = {
   info: 'While you are online, a notification keeps location sharing alive even with the screen locked.',

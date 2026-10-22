@@ -18,6 +18,8 @@ import Driver from './Driver';
 import Vendor from './Vendor';
 import Admin from './Admin';
 import BottomNav from './BottomNav';
+import RideForm from './Ride';
+import { Txt } from './ui';
 
 function Shell() {
   const { s, signIn, agreeTerms, placeCartOrder, setProfile } = useStore();
@@ -30,6 +32,7 @@ function Shell() {
   const [storesCat, setStoresCat] = useState(null);
   const [cartOpen, setCartOpen] = useState(false);
   const [addrOpen, setAddrOpen] = useState(false);
+  const [rideOpen, setRideOpen] = useState(false);
 
   // V16: make sure the cloud profile row exists, then restore name + photo (e.g. after a reinstall)
   React.useEffect(() => {
@@ -62,7 +65,7 @@ function Shell() {
     ? (role === 'driver' ? <Driver /> : role === 'vendor' ? <Vendor />
        : <HomeScreen
            goNew={(c) => { setPreselect(c); setPreselectStore(null); setNewOpen(true); }}
-           goStores={(c) => { setStoresCat(c); }} goCart={() => setCartOpen(true)} />)
+           goStores={(c) => { setStoresCat(c); }} goCart={() => setCartOpen(true)} goRide={() => setRideOpen(true)} />)
     : tab === 'orders' ? <OrdersTab />
     : tab === 'alerts' ? <AlertsTab />
     : <Profile onOpenAddresses={() => setAddrOpen(true)} />;
@@ -70,6 +73,7 @@ function Shell() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.paper }}>
       <StatusBar barStyle="dark-content" />
+      {s.net === 'offline' && <View style={{ backgroundColor: C.bad, padding: 4 }}><Txt c="#fff" s={11} style={{ textAlign: 'center' }}>No connection — retrying…</Txt></View>}
       <View style={{ flex: 1 }}>{main}</View>
       <BottomNav tab={tab} setTab={setTab} alerts={s.alerts} onFab={() => {
         if (role === 'customer') { setPreselect(null); setPreselectStore(null); setNewOpen(true); }
@@ -82,7 +86,12 @@ function Shell() {
       </Modal>
       <Modal visible={newOpen} animationType="slide" onRequestClose={() => setNewOpen(false)}>
         <SafeAreaView style={{ flex: 1 }}>
-          <OrderForm preselect={preselect} preselectStore={preselectStore} onClose={() => setNewOpen(false)} />
+          <OrderForm preselect={preselect} preselectStore={preselectStore} onClose={() => setNewOpen(false)} onPlaced={() => setTab('orders')} />
+        </SafeAreaView>
+      </Modal>
+      <Modal visible={rideOpen} animationType="slide" onRequestClose={() => setRideOpen(false)}>
+        <SafeAreaView style={{ flex: 1 }}>
+          <RideForm onClose={() => setRideOpen(false)} onPlaced={() => setTab('orders')} />
         </SafeAreaView>
       </Modal>
       <Modal visible={!!storesCat} animationType="slide" onRequestClose={() => setStoresCat(null)}>

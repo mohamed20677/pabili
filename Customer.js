@@ -2,9 +2,9 @@
 // Extends V8 without breaking save/query invariants.
 import React, { useState } from 'react';
 import { Image, Linking, Modal, Pressable, ScrollView, View } from 'react-native';
-import { C, CATEGORIES, CATEGORY_ICONS, ORDER_STATUS, peso, useT } from './lib';
+import { C, CATEGORIES, CATEGORY_ICONS, ORDER_STATUS, peso, useT, statusText, distanceKm, fmtKm } from './lib';
 import { useStore } from './store';
-import { fetchRecentDrivers } from './tracking';
+import { fetchDriverLocation } from './tracking';
 import { Btn, Card, Chip, Countdown, Field, Section, Txt } from './ui';
 
 // V16: real photos render as an image (tap to zoom). Photos from the local demo engine are
@@ -55,34 +55,65 @@ export function PhotoTimeline({ o }) {
   );
 }
 
-// V16: live courier banner — reads the freshest points the courier phones publish to Supabase
-// (driver_locations), polling every 10 s. Falls back to the local sample.
+// Live location of the assigned courier / driver (read from Supabase every 8 s).
 export function DriverLocationBanner({ o }) {
-  const { listDriverLocations } = useStore();
-  const [remote, setRemote] = useState(null);
+  const [loc, setLoc] = useState(null);
   React.useEffect(() => {
     let alive = true;
-    const load = async () => { const rows = await fetchRecentDrivers(5); if (alive) setRemote(rows[0] || null); };
+    const load = async () => { const r = await fetchDriverLocation(o.driverPhone); if (alive) setLoc(r); };
     load();
-    const id = setInterval(load, 10000);
+    const id = setInterval(load, 8000);
     return () => { alive = false; clearInterval(id); };
-  }, []);
-  const local = (() => {
-    const all = listDriverLocations(); const k = Object.keys(all).find((x) => all[x].ts && all[x].ts > Date.now() - 5 * 60 * 1000);
-    return k ? all[k] : null;
-  })();
-  const match = remote
-    ? { lat: Number(remote.lat), lng: Number(remote.lng), source: remote.source, ts: new Date(remote.updated_at).getTime() }
-    : local;
-  if (!match) return (
-    <View style={{ marginTop: 8, padding: 8, borderRadius: 12, backgroundColor: '#EAF3EF' }}>
-      <Txt s={11} c={C.mute}>📡 Driver hasn't shared live location yet</Txt>
+  }, [o.driverPhone]);
+  const box = { marginTop: 8, padding: 10, borderRadius: 12, backgroundColor: '#EAF3EF' };
+  if (!loc) return <View style={box}><Txt s={11} c={C.mute}>📡 Waiting for the {o.kind === 'ride' ? 'driver' : 'courier'}'s location…</Txt></View>;
+  const age = Math.round((Date.now() - new Date(loc.updated_at).getTime()) / 1000);
+  const toPickup = o.status === 'accepted' || o.status === 'ready_pickup';
+  const km = distanceKm({ lat: Number(loc.lat), lng: Number(loc.lng) }, toPickup ? { lat: o.pickupLat, lng: o.pickupLng } : { lat: o.dropLat, lng: o.dropLng });
+  return (
+    <View style={box}>
+      <Txt b s={13} c={C.green}>📡 {o.kind === 'ride' ? 'Driver' : 'Courier'} location — {loc.source === 'bg' ? 'live' : 'app open'}</Txt>
+      <Txt s={11}>{km != null ? fmtKm(km) + (toPickup ? ' from the pickup point · ' : ' from the destination · ') : ''}updated {age < 60 ? age + 's' : Math.round(age / 60) + ' min'} ago{age > 120 ? ' ⚠️' : ''}</Txt>
+      <Btn small kind="ghost" title="🗺 See on map" onPress={() => Linking.openURL(`https://www.google.com/maps?q=${loc.lat},${loc.lng}`)} />
     </View>
   );
+}
+
+// Seconds left on a time-boxed offer (ticks every second on its own).
+export function Remaining({ until, total }) {
+  const [, force] = useState(0);
+  React.useEffect(() => { const id = setInterval(() => force((x) => x + 1), 1000); return () => clearInterval(id); }, []);
+  const left = Math.max(0, (until || 0) - Date.now());
   return (
-    <View style={{ marginTop: 8, padding: 10, borderRadius: 12, backgroundColor: '#EAF3EF' }}>
-      <Txt b s={13} c={C.green}>📡 Driver location — {match.source === 'bg' ? 'background' : 'foreground'}</Txt>
-      <Txt s={11}>{match.lat.toFixed(4)}, {match.lng.toFixed(4)} · {new Date(match.ts).toLocaleTimeString()}</Txt>
+    <View style={{ marginTop: 4 }}>
+      <Txt s={11} b c={left < 10000 ? C.bad : C.green}>⏱ {Math.ceil(left / 1000)}s left</Txt>
+      <Countdown left={left} total={(total || 30) * 1000} />
+    </View>
+  );
+}
+
+// Accept / counter / refuse box — the same widget for store quotes, courier fares and ride fares.
+export function NegotiationBox({ title, amount, note, onAccept, onCounter, onRefuse, refuseLabel, canCounter = true, until, total }) {
+  const [v, setV] = useState('');
+  const [busy, setBusy] = useState(false);
+  const go = async (fn) => { setBusy(true); try { await fn(); } finally { setBusy(false); } };
+  return (
+    <View style={{ backgroundColor: '#FBF7EC', borderRadius: 12, padding: 12, marginTop: 10, borderWidth: 1, borderColor: C.gold }}>
+      <Txt b s={14}>{title}</Txt>
+      <Txt b s={22} c={C.green} style={{ marginTop: 2 }}>{peso(amount)}</Txt>
+      {note ? <Txt s={11} c={C.mute}>{note}</Txt> : null}
+      {until ? <Remaining until={until} total={total} /> : null}
+      <View style={{ flexDirection: 'row', marginTop: 8 }}>
+        <Btn small busy={busy} title={'✓ Accept ' + peso(amount)} onPress={() => go(onAccept)} style={{ flex: 1, marginRight: 6 }} />
+        {onRefuse ? <Btn small kind="bad" title={refuseLabel || 'Refuse'} onPress={() => go(onRefuse)} style={{ flex: 1 }} /> : null}
+      </View>
+      {canCounter && onCounter ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
+          <Field value={v} onChangeText={(x) => setV(x.replace(/[^0-9]/g, ''))} keyboardType="number-pad" placeholder="Your offer ₱" style={{ flex: 1, padding: 10 }} />
+          <Btn small kind="ghost" title="Counter" disabled={!v || Number(v) === amount}
+               onPress={() => go(async () => { await onCounter(Number(v)); setV(''); })} style={{ marginLeft: 8, marginTop: 0, paddingHorizontal: 14 }} />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -173,8 +204,7 @@ export function StoresByCategory({ category, onPick, onBack, onAddCart }) {
               </View>
             </View>
             <View style={{ flexDirection: 'row', marginTop: 10 }}>
-              <Btn small title={'🛒 Order ₱<=100'} onPress={() => onPick(s)} style={{ flex: 1, marginRight: 6 }} />
-              <Btn small kind="ghost" title={'➕ Add to cart'} onPress={() => onAddCart(s)} style={{ flex: 1, marginLeft: 6 }} />
+              <Btn small title={'🛒 Order from ' + s.name} onPress={() => onPick(s)} style={{ flex: 1 }} />
             </View>
             {s.lat && s.lng && (
               <Btn small kind="ghost" title={'🗺 Open in Google Maps'}
@@ -188,7 +218,7 @@ export function StoresByCategory({ category, onPick, onBack, onAddCart }) {
   );
 }
 
-export function HomeScreen({ goNew, goStores, goCart }) {
+export function HomeScreen({ goNew, goStores, goCart, goRide }) {
   const { s, cartTotals } = useStore();
   const T = useT();
   const cats = s.settings.categories;
@@ -235,8 +265,16 @@ export function HomeScreen({ goNew, goStores, goCart }) {
         </View>
       </View>
 
-      <Btn title={`🛒 View cart (${t.items} stores · ${peso(t.total)})`} onPress={goCart}
-           style={{ marginHorizontal: 14, marginTop: 6 }} />
+      {s.settings.ride && s.settings.ride.enabled && (
+        <Pressable onPress={goRide} style={{ marginHorizontal: 14, marginTop: 4, backgroundColor: C.green, borderRadius: 18, padding: 16, flexDirection: 'row', alignItems: 'center' }}>
+          <Txt s={38}>🚕</Txt>
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <Txt b s={17} c="#fff">Need a ride?</Txt>
+            <Txt s={12} c="#fff" style={{ opacity: 0.92 }}>Request a driver, agree on the fare, get picked up.</Txt>
+          </View>
+          <Txt b s={24} c="#fff">›</Txt>
+        </Pressable>
+      )}
 
       <Section title={'🚩 ' + T('nearYou')}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -272,46 +310,66 @@ export function HomeScreen({ goNew, goStores, goCart }) {
   );
 }
 
-export function OrderForm({ preselect, preselectStore, onClose }) {
-  const { s, placeOrder } = useStore();
+export function OrderForm({ preselectStore, onClose, onPlaced }) {
+  const { s, placeOrder, listStoresAll } = useStore();
   const T = useT();
   const [text, setText] = useState('');
   const [fee, setFee] = useState('20');
+  const [pay, setPay] = useState('cash');
+  const [store, setStore] = useState(preselectStore || null);
+  const [busy, setBusy] = useState(false);
   const f = Number(fee) || 0;
-  const addr = s.addresses.find((a) => a.default) || s.addresses[0] || { addr: '' };
+  const addr = (s.addresses || []).find((a) => a.default) || (s.addresses || [])[0];
+  const stores = listStoresAll();
+  const place = async () => {
+    setBusy(true);
+    const ok = await placeOrder({ text: text.trim(), fee: f, payVia: pay, storeId: store.id, dropoff: { addr: addr.addr, lat: addr.lat, lng: addr.lng } });
+    setBusy(false);
+    if (ok) { if (onPlaced) onPlaced(); onClose(); }
+  };
+  const chip = (on) => ({ borderWidth: 1.5, borderColor: on ? C.green : C.line, borderRadius: 14, paddingVertical: 9, paddingHorizontal: 12, marginRight: 8, marginBottom: 8, backgroundColor: on ? '#EAF3EF' : '#fff' });
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: '#fff' }}>
+    <ScrollView style={{ flex: 1, backgroundColor: '#fff' }} keyboardShouldPersistTaps="handled">
       <View style={{ backgroundColor: C.greenDk, padding: 18, paddingTop: 12, borderBottomLeftRadius: 24, borderBottomRightRadius: 24 }}>
         <Pressable onPress={onClose}><Txt c="#fff" s={22}>✕</Txt></Pressable>
-        <Txt b s={20} c="#fff" style={{ marginTop: 8 }}>🛍 {preselectStore ? preselectStore.name : 'New order'}</Txt>
+        <Txt b s={20} c="#fff" style={{ marginTop: 8 }}>🛍 {store ? store.name : 'New order'}</Txt>
       </View>
       <View style={{ padding: 16 }}>
-        <Field multiline numberOfLines={4} value={text} onChangeText={setText}
-               placeholder={T('describe')} style={{ minHeight: 100, textAlignVertical: 'top' }} />
-        <Section title={T('pickupFrom')}>
-          <Card style={{ borderColor: C.green, borderWidth: 1.5 }}>
-            <Txt s={12} c={C.mute}>{T('pickupFrom')}</Txt>
-            <Txt b s={14}>{preselectStore ? preselectStore.name : (typeof preselect === 'string' ? preselect : 'Auto — nearest store')}</Txt>
-            {preselectStore && <Txt s={11} c={C.mute}>📍 {preselectStore.address}</Txt>}
-          </Card>
+        <Section title="1 · Store">
+          {stores.length === 0 && <Card><Txt s={13} c={C.mute}>No store is open in the app yet. Stores appear here once an owner registers (My Page → Register my store) and the admin approves it.</Txt></Card>}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+            {stores.map((x) => (
+              <Pressable key={x.id} onPress={() => setStore(x)} style={chip(store && store.id === x.id)}>
+                <Txt s={13} b={store && store.id === x.id}>{CATEGORY_ICONS[x.category] || '🏪'} {x.name}</Txt>
+              </Pressable>
+            ))}
+          </View>
+          {store && <Txt s={11} c={C.mute}>📍 {store.address || store.area}</Txt>}
+        </Section>
+        <Section title="2 · What do you need?">
+          <Field multiline numberOfLines={4} value={text} onChangeText={setText} placeholder={T('describe')} style={{ minHeight: 100, textAlignVertical: 'top' }} />
         </Section>
         <Section title={T('deliverTo')}>
-          <Card>
-            <Txt s={12} c={C.mute}>{T('deliverTo')}</Txt>
-            <Txt b s={14}>🏠 {addr.label || 'Home'} — <Txt s={12} c={C.mute}>{addr.addr}</Txt></Txt>
-            {addr.lat && <Txt s={11} c={C.mute}>📍 {addr.lat.toFixed(4)}, {addr.lng.toFixed(4)} {addr.default ? '⭐ default' : ''}</Txt>}
-          </Card>
+          {addr ? (
+            <Card>
+              <Txt b s={14}>🏠 {addr.label || 'Home'} — <Txt s={12} c={C.mute}>{addr.addr}</Txt></Txt>
+              {addr.lat ? <Txt s={11} c={C.mute}>📍 {addr.lat.toFixed(4)}, {addr.lng.toFixed(4)}</Txt> : null}
+            </Card>
+          ) : <Card><Txt s={13} c={C.bad}>Add a delivery address first (My Page → Saved addresses).</Txt></Card>}
         </Section>
         <Section title={T('feeOffer')}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Field value={fee} onChangeText={(v) => setFee(v.replace(/[^0-9]/g, ''))} keyboardType="number-pad"
-                   style={{ width: 110, textAlign: 'center', fontSize: 22, fontWeight: '800' }} />
-            <Txt s={14} c={C.mute} style={{ marginLeft: 12 }}>delivery only</Txt>
+            <Field value={fee} onChangeText={(v) => setFee(v.replace(/[^0-9]/g, ''))} keyboardType="number-pad" style={{ width: 110, textAlign: 'center', fontSize: 22, fontWeight: '800' }} />
+            <Txt s={13} c={C.mute} style={{ marginLeft: 12, flex: 1 }}>delivery only — the courier can accept or counter, and you decide</Txt>
           </View>
         </Section>
-        <Btn title={T('placeOrder') + ' · ' + peso(f)}
-             disabled={!text.trim() || f <= 0}
-             onPress={() => { placeOrder({ kind: 'order', category: 'Food', text, fee: f, payVia: 'wallet', pickup: 'auto', dropoff: addr.addr, storeId: preselectStore ? preselectStore.id : null }); onClose(); }} />
+        <Section title="Pay with">
+          <View style={{ flexDirection: 'row' }}>
+            <Pressable onPress={() => setPay('cash')} style={chip(pay === 'cash')}><Txt s={13} b={pay === 'cash'}>💵 Cash on delivery</Txt></Pressable>
+            <Pressable onPress={() => setPay('wallet')} style={chip(pay === 'wallet')}><Txt s={13} b={pay === 'wallet'}>👛 Wallet ({peso(s.wallet.balance)})</Txt></Pressable>
+          </View>
+        </Section>
+        <Btn title={T('placeOrder') + ' · ' + peso(f)} busy={busy} disabled={!store || !addr || !text.trim() || f <= 0} onPress={place} />
         <View style={{ height: 100 }} />
       </View>
     </ScrollView>
@@ -408,39 +466,81 @@ export function AddressesScreen({ onClose }) {
   );
 }
 
+function OrderCard({ o }) {
+  const { s, customerConfirm, cancelOrder, dispute, quoteAnswer, driverAnswer } = useStore();
+  const ride = o.kind === 'ride';
+  const bad = o.status === 'cancelled', good = o.status === 'completed';
+  const canCancel = ['vendor_quote', 'vendor_talk', 'finding_driver', 'driver_offer'].includes(o.status) || (ride && ['accepted', 'ready_pickup'].includes(o.status));
+  const who = ride ? 'driver' : 'courier';
+  return (
+    <Card style={{ marginBottom: 12 }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+        <Txt b s={15} style={{ flex: 1 }}>{ride ? '🚕 Ride' : o.storeName ? '🏪 ' + o.storeName : '🛍 ' + o.items}</Txt>
+        <View style={{ backgroundColor: bad ? '#FDECEC' : good ? '#EAF3EF' : '#FBF7EC', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, maxWidth: '55%' }}>
+          <Txt s={11} b c={bad ? C.bad : good ? C.green : C.amber}>{statusText(o)}</Txt>
+        </View>
+      </View>
+      {ride
+        ? <Txt s={12} style={{ marginTop: 4 }}>📍 {o.pickup}{'\n'}🏁 {o.dropoff}</Txt>
+        : <Txt s={12} style={{ marginTop: 4 }}>{o.items}</Txt>}
+      <Txt s={11} c={C.mute} style={{ marginTop: 4 }}>
+        {ride ? 'Fare ' + peso(o.fee) : 'Delivery ' + peso(o.fee) + (o.price ? ' · items ' + peso(o.price) + ' · total ' + peso(o.fee + o.price) : '')} · {o.payVia === 'wallet' ? '👛 wallet' : '💵 cash'}
+      </Txt>
+
+      {!ride && <PhotoTimeline o={o} />}
+      {!ride && ['product', 'packed', 'pickup', 'delivery'].map((k) => (o.photos && o.photos[k]) ? <View key={k}>{photoBubble(o.photos[k])}</View> : null)}
+
+      {!ride && o.status === 'vendor_quote' && <Txt s={12} c={C.mute} style={{ marginTop: 8 }}>⏳ Waiting for the store to confirm stock and price…</Txt>}
+      {!ride && o.status === 'quote_review' && o.neg && (
+        <NegotiationBox title="🧾 The store's price (see the photo above)" amount={o.neg.amount}
+          note={o.neg.final ? 'The store will not go lower.' : 'Accept it, or make a counter-offer.'} canCounter={!o.neg.final}
+          onAccept={() => quoteAnswer(o, 'accept')} onCounter={(a) => quoteAnswer(o, 'counter', a)}
+          onRefuse={() => cancelOrder(o)} refuseLabel="Cancel order" />
+      )}
+      {!ride && o.status === 'vendor_talk' && <Txt s={12} c={C.mute} style={{ marginTop: 8 }}>⏳ Waiting for the store to answer your offer of {peso(o.neg ? o.neg.amount : 0)}…</Txt>}
+
+      {o.status === 'finding_driver' && <Txt s={12} c={C.mute} style={{ marginTop: 8 }}>🔎 Looking for a {who} near you… keep the app open.</Txt>}
+      {o.status === 'driver_offer' && (
+        <View style={{ marginTop: 8 }}>
+          <Txt s={12} c={C.mute}>📨 Your offer of {peso(o.neg ? o.neg.amount : o.fee)} was sent to a nearby {who}.</Txt>
+          {o.offerDeadline ? <Remaining until={o.offerDeadline} total={s.settings.offerSecs} /> : null}
+        </View>
+      )}
+      {o.status === 'driver_talk' && o.neg && (
+        <NegotiationBox title={ride ? '🚕 The driver asks for' : '🛵 The courier asks for'} amount={o.neg.amount} note={'Your offer was ' + peso(o.fee)}
+          until={o.offerDeadline} total={s.settings.customerSecs}
+          onAccept={() => driverAnswer(o, 'accept')} onCounter={(a) => driverAnswer(o, 'counter', a)}
+          onRefuse={() => driverAnswer(o, 'refuse')} refuseLabel={'Find another'} />
+      )}
+
+      {o.driverPhone && ['accepted', 'ready_pickup', 'picked_up', 'delivered'].includes(o.status) && (
+        <View style={{ marginTop: 8, padding: 10, borderRadius: 12, backgroundColor: '#EAF3EF' }}>
+          <Txt b s={13}>{ride ? '🚕' : '🛵'} {o.driver || 'Your ' + who}</Txt>
+          {o.driverVehicle ? <Txt s={12}>{o.driverVehicle}</Txt> : null}
+          <Btn small kind="ghost" title="📞 Call" onPress={() => Linking.openURL('tel:' + o.driverPhone)} />
+        </View>
+      )}
+      {o.driverPhone && ['accepted', 'ready_pickup', 'picked_up'].includes(o.status) && <DriverLocationBanner o={o} />}
+
+      {o.status === 'delivered' && (
+        <View>
+          <Btn small title={ride ? '✓ I arrived — confirm & pay' : 'Confirm ✓'} onPress={() => customerConfirm(o)} />
+          <Btn small kind="ghost" title="Report a problem" onPress={() => dispute(o)} />
+        </View>
+      )}
+      {canCancel && <Btn small kind="bad" title={ride ? 'Cancel ride' : 'Cancel'} onPress={() => cancelOrder(o)} />}
+    </Card>
+  );
+}
+
 export function OrdersTab() {
-  const { s, customerConfirm, cancelOrder, dispute } = useStore();
+  const { s } = useStore();
   const mine = s.orders.filter((o) => o.mine);
   return (
     <ScrollView style={{ flex: 1, backgroundColor: C.paper, padding: 14 }}>
-      <Txt b s={20} style={{ marginBottom: 10 }}>{'Orders'}</Txt>
-      {mine.length === 0 && <Txt c={C.mute} style={{ textAlign: 'center', marginTop: 60 }}>No orders yet — tap ✨ to place one.</Txt>}
-      {mine.map((o) => (
-        <Card key={o.id} style={{ marginBottom: 12 }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-            <Txt b s={15} style={{ flex: 1 }}>{o.storeName ? `🏪 ${o.storeName}` : '🛍 ' + o.items}</Txt>
-            <View style={{ backgroundColor: o.status === 'cancelled' ? '#FDECEC' : o.status === 'completed' ? '#EAF3EF' : '#FBF7EC',
-                           borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 }}>
-              <Txt s={11} b c={o.status === 'cancelled' ? C.bad : o.status === 'completed' ? C.green : C.amber}>
-                {ORDER_STATUS[o.status] || o.status}</Txt>
-            </View>
-          </View>
-          <Txt s={11} c={C.mute} style={{ marginTop: 4 }}>{o.category || ''} · fee {peso(o.fee)} · total {peso(o.fee + (o.price || 0))}</Txt>
-          {o.kind !== 'cart' && <PhotoTimeline o={o} />}
-          {['product', 'packed', 'pickup', 'delivery'].map((k) => o.photos && o.photos[k] ? <View key={k}>{photoBubble(o.photos[k])}</View> : null)}
-          {/* V9: live driver banner for active orders */}
-          {o.status === 'picked_up' && <DriverLocationBanner o={o} />}
-          {o.status === 'delivered' && (
-            <View>
-              <Btn small title="Confirm ✓" onPress={() => customerConfirm(o.id)} />
-              <Btn small kind="ghost" title="Report a problem" onPress={() => dispute(o.id)} />
-            </View>
-          )}
-          {['vendor_quote', 'finding_driver'].includes(o.status) && o.kind !== 'cart' && (
-            <Btn small kind="bad" title="Cancel" onPress={() => cancelOrder(o.id)} />
-          )}
-        </Card>
-      ))}
+      <Txt b s={20} style={{ marginBottom: 10 }}>Orders & rides</Txt>
+      {mine.length === 0 && <Txt c={C.mute} style={{ textAlign: 'center', marginTop: 60 }}>Nothing yet — order from a store or request a ride from Home.</Txt>}
+      {mine.map((o) => <OrderCard key={o.id} o={o} />)}
       <View style={{ height: 100 }} />
     </ScrollView>
   );
