@@ -36,7 +36,16 @@ const DEFAULTS = () => ({
 
 const Ctx = createContext(null);
 export const useStore = () => useContext(Ctx);
-const errMsg = (e) => String((e && e.message) || e || 'Something went wrong');
+const errMsg = (e) => {
+  // Self-diagnosing alert: show the FULL Supabase error (code/details/hint),
+  // not just message — so the next failure pins down its exact cause at once.
+  const parts = [];
+  if (e && e.code) parts.push('code=' + e.code);
+  if (e && e.message) parts.push(e.message);
+  if (e && e.details) parts.push('details=' + e.details);
+  if (e && e.hint) parts.push('hint=' + e.hint);
+  return parts.join(' | ') || String(e || 'Something went wrong');
+};
 
 // What should this phone hear about when an order it is part of changes?
 function alertFor(o, prev) {
