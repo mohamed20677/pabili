@@ -282,7 +282,19 @@ export async function setStoreOpen(me, open) {
   if (error) throw error;
 }
 export async function submitKycCloud(me, name, role, data) {
-  const { error } = await supabase.from('kyc_requests').insert({ user_phone: me, user_name: name, role, status: 'pending', data });
+  // V19 LIVE-DB FIX: the live kyc_requests.user_id is NOT NULL with an FK to
+  // profiles — so we send it ourselves and Submit-for-review passes regardless
+  // of DB state. Source: 1) the signed-in auth user id, 2) fallback: the
+  // profiles row matched by phone. If both fail, insert without it (old shape).
+  let userId = null;
+  try { const g = await supabase.auth.getUser(); userId = (g && g.data && g.data.user && g.data.user.id) || null; } catch (e) { userId = null; }
+  if (!userId) {
+    const { data: prof } = await supabase.from('profiles').select('id').eq('phone', me).maybeSingle();
+    userId = (prof && prof.id) || null;
+  }
+  const row = { user_phone: me, user_name: name, role, status: 'pending', data };
+  if (userId) row.user_id = userId;
+  const { error } = await supabase.from('kyc_requests').insert(row);
   if (error) throw error;
   const patch = { phone: me, [role + '_status']: 'pending' };
   if (role === 'driver') { patch.vehicle = [data.vehicle, data.model].filter(Boolean).join(' '); patch.plate = data.plate; }
@@ -316,11 +328,6 @@ export async function adminFreezeCloud(phone, v, admin) {
   const { error } = await supabase.from('profiles').update({ is_frozen: v }).eq('phone', phone);
   if (error) throw error;
   await auditCloud(v ? 'User frozen' : 'User unfrozen', phone, phone, admin);
-}
-export async function deleteAccountCloud(me) {
-  const { data, error } = await supabase.rpc('delete_account', { p_phone: me });
-  if (error) throw error;
-  if (!data || !data.ok) throw new Error((data && data.error) || 'Could not delete the account.');
 }
 export async function adjustWalletCloud(phone, delta, reason, admin) {
   const { data, error } = await supabase.rpc('adjust_wallet', { p_phone: phone, p_delta: delta, p_reason: reason, p_by: admin });

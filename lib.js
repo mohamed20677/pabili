@@ -148,7 +148,7 @@ export const mapsUrl = (lat, lng, text) => (lat != null && lng != null
 // Background tracking (V16): real on the Android APK via a foreground service (expo-task-manager).
 export const BG_GEO = {
   info: 'While you are online, a notification keeps location sharing alive even with the screen locked.',
-  needAlways: 'Location must be set to "Allow all the time" (Android) or "Always" (iPhone) for tracking with the screen locked.',
+  needAlways: 'Location must be set to "Allow all the time" for tracking with the screen locked.',
 };
 
 // Straight-line distance in km (haversine). Returns null if any coordinate is missing.

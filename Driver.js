@@ -64,12 +64,12 @@ export default function Driver() {
     idle: null,
     starting: { c: C.mute, t: '⏳ Starting location sharing…' },
     bg: { c: C.green, t: '✅ Online · you receive offers, location is live even with the screen locked' },
-    fg: { c: C.amber, t: '⚠️ Online, but only while the app is open. Set Location to "Allow all the time" (Android) / "Always" (iPhone) to keep receiving offers with the screen locked.' },
-    denied: { c: C.bad, t: '❌ Location permission denied — customers and dispatch cannot see you. Enable it in Settings → Pabili → Location on your phone.' },
+    fg: { c: C.amber, t: '⚠️ Online, but only while the app is open. Set Location to "Allow all the time" to keep receiving offers with the screen locked.' },
+    denied: { c: C.bad, t: '❌ Location permission denied — customers and dispatch cannot see you. Enable it in Android settings.' },
   }[trk.state];
 
   return (
-    <ScrollView automaticallyAdjustKeyboardInsets style={{ flex: 1, backgroundColor: C.paper, padding: 14 }}>
+    <ScrollView style={{ flex: 1, backgroundColor: C.paper, padding: 14 }}>
       <Section title="🛵 Driver board">
         <Row icon="🟢" label="Online" right={<Switch value={!!s.driverOnline} onValueChange={(v) => toggleOnline('driver', v)} trackColor={{ true: C.green }} />} />
         {!s.driverOnline && <Txt s={12} c={C.mute} style={{ marginTop: 6 }}>Go online to receive delivery offers and ride requests. {BG_GEO.info}</Txt>}

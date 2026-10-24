@@ -30,7 +30,7 @@ export default function Vendor() {
   const pct = s.settings.commissions.vendorPct;
 
   return (
-    <ScrollView automaticallyAdjustKeyboardInsets style={{ flex: 1, backgroundColor: C.paper, padding: 14 }} keyboardShouldPersistTaps="handled">
+    <ScrollView style={{ flex: 1, backgroundColor: C.paper, padding: 14 }} keyboardShouldPersistTaps="handled">
       <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
         <View style={{ flex: 1 }}>
           <Txt b s={20}>🏪 {store ? store.name : 'Store board'}</Txt>

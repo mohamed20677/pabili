@@ -131,7 +131,7 @@ export function CartScreen({ onClose, onPlace }) {
         <Txt b s={20} c="#fff" style={{ marginTop: 8 }}>🛒 Cart ({items.length} store{items.length === 1 ? '' : 's'})</Txt>
         <Txt s={12} c="#fff" style={{ opacity: 0.85 }}>One courier picks up all items; per-store prices stay separate.</Txt>
       </View>
-      <ScrollView automaticallyAdjustKeyboardInsets style={{ flex: 1, padding: 14 }}>
+      <ScrollView style={{ flex: 1, padding: 14 }}>
         {items.length === 0 && <Card style={{ paddingVertical: 30, alignItems: 'center' }}>
           <Txt s={40}>🛍️</Txt>
           <Txt b s={16} style={{ marginTop: 4 }}>Cart is empty</Txt>
@@ -184,7 +184,7 @@ export function StoresByCategory({ category, onPick, onBack, onAddCart }) {
           </View>
         </View>
       </View>
-      <ScrollView automaticallyAdjustKeyboardInsets style={{ flex: 1, padding: 14 }}>
+      <ScrollView style={{ flex: 1, padding: 14 }}>
         {stores.length === 0 && (
           <Card style={{ alignItems: 'center', paddingVertical: 26 }}>
             <Txt s={36}>🏚</Txt>
@@ -225,7 +225,7 @@ export function HomeScreen({ goNew, goStores, goCart, goRide }) {
   const cats = s.settings.categories;
   const t = cartTotals();
   return (
-    <ScrollView automaticallyAdjustKeyboardInsets style={{ flex: 1, backgroundColor: C.paper }}>
+    <ScrollView style={{ flex: 1, backgroundColor: C.paper }}>
       <View style={{ backgroundColor: '#EAF3EF', padding: 16, paddingTop: 8, borderBottomLeftRadius: 24, borderBottomRightRadius: 24 }}>
         <Pressable style={{ flexDirection: 'row', alignItems: 'center' }} onPress={goCart}>
           <Txt s={17}>📍</Txt>
@@ -337,7 +337,7 @@ export function OrderForm({ preselectStore, onClose, onPlaced }) {
   };
   const chip = (on) => ({ borderWidth: 1.5, borderColor: on ? C.green : C.line, borderRadius: 14, paddingVertical: 9, paddingHorizontal: 12, marginRight: 8, marginBottom: 8, backgroundColor: on ? '#EAF3EF' : '#fff' });
   return (
-    <ScrollView automaticallyAdjustKeyboardInsets style={{ flex: 1, backgroundColor: '#fff' }} keyboardShouldPersistTaps="handled">
+    <ScrollView style={{ flex: 1, backgroundColor: '#fff' }} keyboardShouldPersistTaps="handled">
       <View style={{ backgroundColor: C.greenDk, padding: 18, paddingTop: 12, borderBottomLeftRadius: 24, borderBottomRightRadius: 24 }}>
         <Pressable onPress={onClose}><Txt c="#fff" s={22}>✕</Txt></Pressable>
         <Txt b s={20} c="#fff" style={{ marginTop: 8 }}>{errand ? '🧭 Buy it for me' : '🛍 ' + (store ? store.name : 'Order from a store')}</Txt>
@@ -447,7 +447,7 @@ export function AddressesScreen({ onClose }) {
         <Txt b s={20} c="#fff" style={{ marginTop: 8 }}>📍 Saved addresses</Txt>
         <Txt s={12} c="#fff" style={{ opacity: 0.85 }}>Tap a star to mark default; one address is the default.</Txt>
       </View>
-      <ScrollView automaticallyAdjustKeyboardInsets style={{ flex: 1, padding: 14 }}>
+      <ScrollView style={{ flex: 1, padding: 14 }}>
         {(s.addresses || []).map((a) => (
           <Card key={a.id} style={{ marginBottom: 10, borderColor: a.default ? C.green : C.line, borderWidth: a.default ? 2 : 1 }}>
             {editId === a.id ? (
@@ -568,7 +568,7 @@ export function OrdersTab() {
   const { s } = useStore();
   const mine = s.orders.filter((o) => o.mine);
   return (
-    <ScrollView automaticallyAdjustKeyboardInsets style={{ flex: 1, backgroundColor: C.paper, padding: 14 }}>
+    <ScrollView style={{ flex: 1, backgroundColor: C.paper, padding: 14 }}>
       <Txt b s={20} style={{ marginBottom: 10 }}>Orders & rides</Txt>
       {mine.length === 0 && <Txt c={C.mute} style={{ textAlign: 'center', marginTop: 60 }}>Nothing yet — order from a store or request a ride from Home.</Txt>}
       {mine.map((o) => <OrderCard key={o.id} o={o} />)}

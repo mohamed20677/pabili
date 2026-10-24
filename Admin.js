@@ -53,7 +53,7 @@ export default function Admin() {
           ))}
         </View>
       </View>
-      <ScrollView automaticallyAdjustKeyboardInsets style={{ flex: 1, padding: 14 }}>
+      <ScrollView style={{ flex: 1, padding: 14 }}>
 
         {tab === 'withdrawals' && (
           <View>

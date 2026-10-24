@@ -7,7 +7,6 @@ import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { stopBgTracking } from './tracking';
 import { notify } from './notifications';
-import { purgeMyFiles } from './media';
 import { supabase } from './supabase';
 import * as C from './cloud';
 import { uid, now, CATEGORIES } from './lib';
@@ -37,7 +36,16 @@ const DEFAULTS = () => ({
 
 const Ctx = createContext(null);
 export const useStore = () => useContext(Ctx);
-const errMsg = (e) => String((e && e.message) || e || 'Something went wrong');
+const errMsg = (e) => {
+  // Self-diagnosing alert: show the FULL Supabase error (code/details/hint),
+  // not just message — so the next failure pins down its exact cause at once.
+  const parts = [];
+  if (e && e.code) parts.push('code=' + e.code);
+  if (e && e.message) parts.push(e.message);
+  if (e && e.details) parts.push('details=' + e.details);
+  if (e && e.hint) parts.push('hint=' + e.hint);
+  return parts.join(' | ') || String(e || 'Something went wrong');
+};
 
 // What should this phone hear about when an order it is part of changes?
 function alertFor(o, prev) {
@@ -194,18 +202,6 @@ export function StoreProvider({ children }) {
     addCoupon: (code) => setS((c) => ({ ...c, profile: { ...c.profile, coupons: [...c.profile.coupons, code] } })),
     switchRole: (role) => setS((c) => ((role === 'customer' || (c.roles[role] && c.roles[role].status === 'approved')) ? { ...c, activeRole: role } : c)),
     refresh: () => refresh(true),
-    // Apple requires in-app account deletion. Cloud data first (it refuses while orders/wallet are open), then files, then this phone.
-    deleteAccount: async () => {
-      try {
-        const phone2 = me();
-        await C.deleteAccountCloud(phone2);
-        await purgeMyFiles(phone2);
-        stopBgTracking(); prevRef.current = null;
-        AsyncStorage.removeItem(KEY).catch(() => {});
-        setS(DEFAULTS());
-        return true;
-      } catch (e) { Alert.alert('Delete account', errMsg(e)); return false; }
-    },
 
     // ---- addresses (local) ----
     addAddress: (a) => setS((c) => {
