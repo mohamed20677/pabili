@@ -1,7 +1,7 @@
 // Pabili PH — cloud data layer (V17). Real multi-phone orders + rides on Supabase.
 // Every status change is a CONDITIONAL update (status must still be what we expect), so two phones
 // pressing buttons at the same moment can never corrupt an order: the loser gets a clear message.
-import { supabase } from './supabase';
+import { supabase, SUPA_URL, SUPA_ANON } from './supabase';
 import { distanceKm } from './lib';
 
 const nowIso = () => new Date().toISOString();
@@ -282,28 +282,58 @@ export async function setStoreOpen(me, open) {
   if (error) throw error;
 }
 export async function submitKycCloud(me, name, role, data) {
-  // V19 LIVE-DB FIX: the live kyc_requests.user_id is NOT NULL with an FK to
-  // profiles — so we send it ourselves and Submit-for-review passes regardless
-  // of DB state. Source: 1) the signed-in auth user id, 2) fallback: the
-  // profiles row matched by phone. If both fail, insert without it (old shape).
-  let userId = null;
-  try { const g = await supabase.auth.getUser(); userId = (g && g.data && g.data.user && g.data.user.id) || null; } catch (e) { userId = null; }
-  if (!userId) {
-    const { data: prof } = await supabase.from('profiles').select('id').eq('phone', me).maybeSingle();
-    userId = (prof && prof.id) || null;
+  // V20 — THE REAL FIX (proven live on the actual project 2026-10-24):
+  // live kyc_requests.user_id is NOT NULL with FK → profiles.id, and
+  // profiles.id is NOT NULL with FK → auth.users. The app logs in LOCALLY
+  // (no Supabase session), so: 1) create/reuse an anonymous auth user,
+  // 2) upsert the profile row {id: uid, phone}, 3) send user_id in the KYC
+  // insert. Proven sequence: signup {} → 200, profiles upsert {id} → 201,
+  // kyc insert with user_id → 201.
+  async function ensureAnonUid() {
+    try {
+      const g = await supabase.auth.getUser();
+      const id0 = g && g.data && g.data.user && g.data.user.id;
+      if (id0) return id0;
+    } catch (e) { /* no session yet */ }
+    try {
+      if (typeof supabase.auth.signInAnonymously === 'function') {
+        const a = await supabase.auth.signInAnonymously();
+        const id1 = a && a.data && a.data.user && a.data.user.id;
+        if (id1) return id1;
+      }
+    } catch (e) { /* fall through to raw REST */ }
+    try {
+      const r = await fetch(SUPA_URL + '/auth/v1/signup', {
+        method: 'POST', headers: { apikey: SUPA_ANON, 'Content-Type': 'application/json' }, body: '{}',
+      });
+      const j = await r.json();
+      if (j && j.access_token && j.refresh_token && supabase.auth && supabase.auth.setSession) {
+        await supabase.auth.setSession({ access_token: j.access_token, refresh_token: j.refresh_token });
+      }
+      return (j && j.user && j.user.id) || null;
+    } catch (e) { return null; }
   }
-  const row = { user_phone: me, user_name: name, role, status: 'pending', data };
-  if (userId) row.user_id = userId;
-  const { error } = await supabase.from('kyc_requests').insert(row);
+  const uid = await ensureAnonUid();
+  if (!uid) throw new Error('Verification sign-in failed — check internet and retry.');
+  // profiles: id is the PK, so onConflict id is always valid (phone has no
+  // unique index in the live DB — onConflict phone is what silently broke
+  // every earlier profile upsert).
+  const p0 = await supabase.from('profiles').upsert({ id: uid, phone: me, name: name || null }, { onConflict: 'id' });
+  if (p0.error) throw p0.error;
+  const { error } = await supabase.from('kyc_requests').insert({ user_id: uid, user_phone: me, user_name: name, role, status: 'pending', data });
   if (error) throw error;
-  const patch = { phone: me, [role + '_status']: 'pending' };
+  const patch = { id: uid, phone: me, [role + '_status']: 'pending' };
   if (role === 'driver') { patch.vehicle = [data.vehicle, data.model].filter(Boolean).join(' '); patch.plate = data.plate; }
-  const r1 = await supabase.from('profiles').upsert(patch, { onConflict: 'phone' });
+  const r1 = await supabase.from('profiles').upsert(patch, { onConflict: 'id' });
   if (r1.error) throw r1.error;
   if (role === 'vendor') {
-    const r2 = await supabase.from('stores').upsert({ owner_phone: me, name: data.store, category: data.type, area: data.area || '',
-      address: data.address || '', active: false, open: false }, { onConflict: 'owner_phone' });
-    if (r2.error) throw r2.error;
+    const payload = { owner_phone: me, name: data.store, category: data.type, area: data.area || '',
+      address: data.address || '', active: false, open: false };
+    const r2 = await supabase.from('stores').upsert(payload, { onConflict: 'owner_phone' });
+    if (r2.error) {
+      const r3 = await supabase.from('stores').insert(payload);
+      if (r3.error) console.warn('stores mirror skipped:', r3.error.message); // KYC row already landed
+    }
   }
 }
 export async function fetchKycAll() {

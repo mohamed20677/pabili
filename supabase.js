@@ -17,6 +17,8 @@ function readEnv() {
 const { url, anon } = readEnv();
 
 export const SUPABASE_ENABLED = !!(url && anon);
+export const SUPA_URL = url;   // V20: raw REST fallback for anonymous sign-in
+export const SUPA_ANON = anon;
 
 export const supabase = SUPABASE_ENABLED
   ? createClient(url, anon, {
