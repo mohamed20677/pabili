@@ -317,6 +317,11 @@ export async function adminFreezeCloud(phone, v, admin) {
   if (error) throw error;
   await auditCloud(v ? 'User frozen' : 'User unfrozen', phone, phone, admin);
 }
+export async function deleteAccountCloud(me) {
+  const { data, error } = await supabase.rpc('delete_account', { p_phone: me });
+  if (error) throw error;
+  if (!data || !data.ok) throw new Error((data && data.error) || 'Could not delete the account.');
+}
 export async function adjustWalletCloud(phone, delta, reason, admin) {
   const { data, error } = await supabase.rpc('adjust_wallet', { p_phone: phone, p_delta: delta, p_reason: reason, p_by: admin });
   if (error) throw error;

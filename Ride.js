@@ -70,7 +70,7 @@ export default function RideForm({ onClose, onPlaced }) {
   const chip = (on) => ({ borderWidth: 1.5, borderColor: on ? C.green : C.line, borderRadius: 14, paddingVertical: 9, paddingHorizontal: 12, marginRight: 8, marginBottom: 8, backgroundColor: on ? '#EAF3EF' : '#fff' });
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: '#fff' }} keyboardShouldPersistTaps="handled">
+    <ScrollView automaticallyAdjustKeyboardInsets style={{ flex: 1, backgroundColor: '#fff' }} keyboardShouldPersistTaps="handled">
       <View style={{ backgroundColor: C.greenDk, padding: 18, paddingTop: 12, borderBottomLeftRadius: 24, borderBottomRightRadius: 24 }}>
         <Pressable onPress={onClose}><Txt c="#fff" s={22}>✕</Txt></Pressable>
         <Txt b s={20} c="#fff" style={{ marginTop: 8 }}>🚕 Request a ride</Txt>

@@ -39,7 +39,7 @@ function CategoryPicker({ value, onPick }) {
 export function AlertsTab() {
   const { s } = useStore();
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: C.paper, padding: 14 }}>
+    <ScrollView automaticallyAdjustKeyboardInsets style={{ flex: 1, backgroundColor: C.paper, padding: 14 }}>
       <Txt b s={20} style={{ marginBottom: 10 }}>🔔 Alerts</Txt>
       {s.alerts.length === 0 && <Txt c={C.mute} style={{ textAlign: 'center', marginTop: 60 }}>No alerts yet.</Txt>}
       {s.alerts.map((a) => (
@@ -70,7 +70,7 @@ export function WithdrawScreen({ onClose }) {
         <Txt b s={20} c="#fff" style={{ marginTop: 8 }}>💸 Withdraw to PH rails</Txt>
         <Txt s={12} c="#fff" style={{ opacity: 0.85 }}>Balance: {peso(s.wallet.balance)}</Txt>
       </View>
-      <ScrollView style={{ flex: 1, padding: 14 }}>
+      <ScrollView automaticallyAdjustKeyboardInsets style={{ flex: 1, padding: 14 }}>
         <Section title="1 · Choose a payout channel">
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
             {Object.entries(WITHDRAWAL_PROVIDERS).map(([k, c]) => (
@@ -158,7 +158,7 @@ function KycForm({ role, onDone }) {
     </View>
   );
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: C.paper, padding: 16 }}>
+    <ScrollView automaticallyAdjustKeyboardInsets style={{ flex: 1, backgroundColor: C.paper, padding: 16 }}>
       <Card style={{ borderTopWidth: 4, borderTopColor: C.green }}>
         <Txt b s={18}>{isDriver ? '🛵 Driver verification' : '🏪 Store verification'}</Txt>
         <Txt s={12} c={C.mute} style={{ marginTop: 4 }}>Step 1 of 1 — admin reviews before features unlock.</Txt>
@@ -231,7 +231,7 @@ function EditProfile({ visible, onClose }) {
           <Pressable onPress={onClose}><Txt c="#fff" s={20}>‹ Back</Txt></Pressable>
           <Txt b s={20} c="#fff" style={{ marginTop: 8 }}>⚙️ Settings — my profile</Txt>
         </View>
-        <ScrollView style={{ flex: 1, padding: 18 }} keyboardShouldPersistTaps="handled">
+        <ScrollView automaticallyAdjustKeyboardInsets style={{ flex: 1, padding: 18 }} keyboardShouldPersistTaps="handled">
           <View style={{ alignItems: 'center', marginTop: 8 }}>
             <Pressable onPress={pickAvatar} style={{ width: 120, height: 120, borderRadius: 60, backgroundColor: '#fff', borderWidth: 2,
                                                     borderColor: C.green, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
@@ -266,7 +266,7 @@ function Pending({ role }) {
 }
 
 export default function Profile({ onOpenAddresses }) {
-  const { s, signOut, addCoupon, switchRole } = useStore();
+  const { s, signOut, addCoupon, switchRole, deleteAccount } = useStore();
   const T = useT();
   const { lang, setLang } = React.useContext(LangCtx);
   const [dlg, setDlg] = useState(false);
@@ -293,7 +293,7 @@ export default function Profile({ onOpenAddresses }) {
   };
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: '#fff' }}>
+    <ScrollView automaticallyAdjustKeyboardInsets style={{ flex: 1, backgroundColor: '#fff' }}>
       <View style={{ backgroundColor: C.greenDk, padding: 18, paddingBottom: 26 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <Pressable onPress={() => setEditOpen(true)} style={{ width: 62, height: 62, borderRadius: 31, backgroundColor: '#fff',
@@ -354,6 +354,9 @@ export default function Profile({ onOpenAddresses }) {
         )}
         {role !== 'customer' && <Btn kind="ghost" title="🛒 Back to shopping mode" onPress={() => switchRole('customer')} />}
         <Btn kind="bad" title={T('logout')} onPress={signOut} />
+        <Btn small kind="ghost" title="🗑 Delete my account"
+             onPress={() => Alert.alert('Delete your account?', 'This removes your name, photo, verification documents and saved data. Order and wallet records are kept without your name. It cannot be undone, and it is refused while you have an order in progress or money in your wallet.',
+               [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: () => deleteAccount() }])} />
       </View>
       <View style={{ height: 90 }} />
       <RoleDialog visible={dlg} onClose={() => setDlg(false)} onPick={pickRole} />

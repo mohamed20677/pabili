@@ -35,7 +35,7 @@ async function pick(source, square) {
   };
   if (source === 'camera') {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
-    if (!perm.granted) throw new Error('Camera permission is off. Enable it in Android Settings → Apps → Pabili → Permissions.');
+    if (!perm.granted) throw new Error('Camera permission is off. Enable it in Settings → Pabili → Camera on your phone.');
     return ImagePicker.launchCameraAsync(opts);
   }
   return ImagePicker.launchImageLibraryAsync(opts);
@@ -93,6 +93,21 @@ export async function takeProofPhoto({ kind, owner, bucket = BUCKETS.orders, squ
   } catch (e) {
     Alert.alert('Photo not uploaded', explain(e));
     return null;
+  }
+}
+
+// Best-effort removal of everything this user uploaded (used by "Delete my account").
+export async function purgeMyFiles(owner) {
+  if (!SUPABASE_ENABLED || !supabase) return;
+  const id = safe(owner);
+  const pairs = [['avatar', BUCKETS.avatar], ['license', BUCKETS.license], ['selfie', BUCKETS.selfie], ['permit', BUCKETS.store], ['front', BUCKETS.store],
+                 ['product', BUCKETS.orders], ['packed', BUCKETS.orders], ['pickup', BUCKETS.orders], ['delivery', BUCKETS.orders]];
+  for (const [folder, bucket] of pairs) {
+    try {
+      const dir = `${folder}/${id}`;
+      const { data } = await supabase.storage.from(bucket).list(dir, { limit: 200 });
+      if (data && data.length) await supabase.storage.from(bucket).remove(data.map((f) => `${dir}/${f.name}`));
+    } catch (e) { /* best effort */ }
   }
 }
 

@@ -51,6 +51,7 @@ export async function startBgTracking(phone) {
         accuracy: Location.Accuracy.Balanced,
         timeInterval: 10000, distanceInterval: 0, // time-based so a parked courier still counts as online
         pausesUpdatesAutomatically: false,
+        activityType: Location.ActivityType.AutomotiveNavigation, // iOS: don't let the OS pause updates while driving
         showsBackgroundLocationIndicator: true,
         foregroundService: {
           notificationTitle: 'Pabili — you are online',

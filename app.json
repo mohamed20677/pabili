@@ -2,11 +2,12 @@
   "expo": {
     "name": "Pabili",
     "slug": "pabili-ph",
-    "version": "1.5.0",
+    "version": "1.6.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "platforms": [
-      "android"
+      "android",
+      "ios"
     ],
     "icon": "./assets/icon.png",
     "notification": {
@@ -22,14 +23,15 @@
       "package": "com.pabili.ph",
       "versionCode": 15,
       "permissions": [
-        "INTERNET",
-        "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION",
-        "ACCESS_BACKGROUND_LOCATION",
-        "FOREGROUND_SERVICE",
-        "FOREGROUND_SERVICE_LOCATION",
-        "CAMERA",
-        "POST_NOTIFICATIONS"
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.RECORD_AUDIO"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -41,9 +43,10 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Pabili uses your location to match nearby stores and, while you are online as a courier, to share your live position for active deliveries \u2014 even when the screen is locked.",
+          "locationAlwaysAndWhenInUsePermission": "Pabili uses your location to match nearby stores and, while you are online as a courier, to share your live position for active deliveries — even when the screen is locked.",
           "isAndroidBackgroundLocationEnabled": true,
-          "isAndroidForegroundServiceEnabled": true
+          "isAndroidForegroundServiceEnabled": true,
+          "isIosBackgroundLocationEnabled": true
         }
       ],
       [
@@ -52,7 +55,38 @@
           "photosPermission": "Pabili needs your photos to attach pictures to orders and your profile.",
           "cameraPermission": "Pabili needs the camera to take product, pickup and delivery photos."
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#0E7C5B"
+        }
       ]
-    ]
+    ],
+    "ios": {
+      "bundleIdentifier": "com.pabili.ph",
+      "buildNumber": "1",
+      "supportsTablet": false,
+      "icon": "./assets/icon-ios.png",
+      "config": {
+        "usesNonExemptEncryption": false
+      },
+      "infoPlist": {
+        "CFBundleDisplayName": "Pabili",
+        "UIBackgroundModes": [
+          "location"
+        ],
+        "NSLocationWhenInUseUsageDescription": "Pabili uses your location to find nearby stores and couriers, and to set your pickup point for rides and deliveries.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "While you are Online as a courier or driver, Pabili shares your live location with the customer of your active delivery or ride — even when the screen is locked. Location is not shared when you are Offline.",
+        "NSCameraUsageDescription": "Pabili needs the camera to take product, pickup and delivery photos and your verification documents.",
+        "NSPhotoLibraryUsageDescription": "Pabili needs your photos to attach pictures to orders, your profile and verification."
+      }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "cb51208e-b4ff-4f99-ba3f-7a62fbe21f7b"
+      }
+    },
+    "owner": "ssjss"
   }
 }

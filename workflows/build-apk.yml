@@ -1,0 +1,100 @@
+name: Build Pabili PH APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', '*.zip']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Workflow version check
+        run: echo "=== PABILI-PH BUILD V17 (REAL MULTI-PHONE ORDERS + RIDES) ==="
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Generate icons if missing
+        run: |
+          python3 -m pip install --quiet pillow 2>/dev/null \
+            || python3 -m pip install --quiet --break-system-packages pillow 2>/dev/null \
+            || echo "PILLOW unavailable - pure-python fallback"
+          python3 << 'PYEOF'
+          import os, zlib, struct
+          BRAND = (14, 124, 91)
+          def chunk(tag, data): return (struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data) & 0xffffffff))
+          def write_solid_png(path, w, h, rgba):
+              raw = b''.join(b'\x00' + bytes(rgba) * w for _ in range(h))
+              png = (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 6, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b''))
+              with open(path, 'wb') as f: f.write(png)
+          try:
+              from PIL import Image, ImageDraw, ImageFont; HAS_PIL = True
+          except Exception: HAS_PIL = False
+          def load_font(size):
+              for p in ('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+                        '/usr/share/fonts/truetype/freefont/FreeSansBold.ttf'):
+                  try: return ImageFont.truetype(p, size)
+                  except Exception: continue
+              return ImageFont.load_default()
+          def make_icon(path, size, transparent=False):
+              if not HAS_PIL: write_solid_png(path, size, size, (0,0,0,0) if transparent else BRAND + (255,)); print('icon (fallback):', path); return
+              img = Image.new('RGBA', (size, size), (0,0,0,0) if transparent else BRAND + (255,))
+              d = ImageDraw.Draw(img); d.ellipse([size*0.14, size*0.14, size*0.86, size*0.86], fill=BRAND + (255,))
+              f = load_font(int(size*0.5))
+              try: d.text((size//2, size//2), 'P', fill='white', anchor='mm', font=f)
+              except Exception: d.text((int(size*0.32), int(size*0.2)), 'P', fill='white', font=f)
+              img.save(path); print('icon:', path)
+          def make_splash(path, w, h):
+              if not HAS_PIL: write_solid_png(path, w, h, BRAND + (255,)); print('splash (fallback):', path); return
+              img = Image.new('RGB', (w, h), BRAND); d = ImageDraw.Draw(img); f = load_font(600)
+              try: d.text((w//2, h//2), 'P', fill='white', anchor='mm', font=f)
+              except Exception: d.text((int(w*0.42), int(h*0.44)), 'P', fill='white', font=f)
+              img.save(path); print('splash:', path)
+          os.makedirs('assets', exist_ok=True)
+          if not os.path.exists('assets/icon.png'): make_icon('assets/icon.png', 1024)
+          if not os.path.exists('assets/adaptive-icon.png'): make_icon('assets/adaptive-icon.png', 1024, transparent=True)
+          if not os.path.exists('assets/notification-icon.png'): make_icon('assets/notification-icon.png', 96)
+          if not os.path.exists('assets/favicon.png'): make_icon('assets/favicon.png', 48)
+          if not os.path.exists('assets/splash.png'): make_splash('assets/splash.png', 1242, 2436)
+          print('ALL ICONS READY')
+          PYEOF
+
+      - name: Install packages
+        run: npm install --legacy-peer-deps --no-audit --no-fund || npm ci --legacy-peer-deps --no-audit --no-fund
+
+      - name: Align Expo package versions with the SDK
+        run: npx expo install --fix -- --legacy-peer-deps --no-audit --no-fund || echo "expo install --fix skipped"
+
+      - name: Prebuild Android
+        run: npx expo prebuild --platform android --clean
+
+      - name: Bundle JS into APK
+        run: npx expo export:embed --entry-file index.js --platform android --dev false --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res
+
+      - name: Build APK with Gradle
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pabili-ph-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
