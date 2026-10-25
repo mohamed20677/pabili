@@ -22,7 +22,7 @@ export default function Driver() {
   useEffect(() => {
     if (!s.driverOnline) { stopBgTracking(); setTrk({ state: 'idle' }); return undefined; }
     let alive = true, sub = null, first = true;
-    const hb = setInterval(() => heartbeat(phone), 30000);
+    const hb = setInterval(() => heartbeat(phone), 15000); // V26: 15s — row stays fresh + online:true
     (async () => {
       setTrk({ state: 'starting' });
       const r = await startBgTracking(phone || 'me');
@@ -35,7 +35,12 @@ export default function Driver() {
         sub = await Location.watchPositionAsync({ accuracy: Location.Accuracy.Balanced, timeInterval: 5000, distanceInterval: 10 }, (pos) => {
           if (!alive) return;
           updateDriverLocation(phone || 'me', pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy, 'fg');
-          if (!r.ok) { publishLocation(phone, pos.coords, 'fg', first); first = false; } // foreground-only fallback publishes itself
+          // V26: ALWAYS publish from the fg watcher (throttled inside) — in bg
+          // mode this is a belt-and-suspenders second writer; in fg-fallback
+          // mode it is the only writer. Either way the row goes online:true
+          // within seconds of toggling ON, even if the bg permission prompt
+          // is still pending (the 'Starting…' hang on emulators).
+          publishLocation(phone, pos.coords, r.ok ? 'bg' : 'fg', first); first = false;
         });
       } catch (e) { /* location module unavailable */ }
     })();

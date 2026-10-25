@@ -250,7 +250,11 @@ export function StoreProvider({ children }) {
     },
     listStoresAll: () => ((sRef.current && sRef.current.stores) || []).filter((x) => x.active && x.open),
     toggleOnline: (kind, v) => {
-      if (kind === 'driver') { setS((c) => ({ ...c, driverOnline: v })); return Promise.resolve(); }
+      if (kind === 'driver') {
+        setS((c) => ({ ...c, driverOnline: v }));
+        try { C.setDriverOnlineFlag(me(), v); } catch (e) { /* fire-and-forget */ } // V26: flag follows the toggle immediately
+        return Promise.resolve();
+      }
       return run('Store', () => C.setStoreOpen(me(), v));
     },
     updateDriverLocation: (id, lat, lng, accuracy, source) => setS((c) => ({ ...c, driverLocations: { ...(c.driverLocations || {}), [id]: { lat, lng, ts: now(), accuracy: accuracy || null, source: source || 'fg' } } })),

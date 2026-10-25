@@ -348,6 +348,25 @@ async function busyDrivers() {
   });
   return busy;
 }
+// V26: the DB online flag is driven by the APP's toggle (the old path left it
+// stale-false while the driver was online — the live row for +639812345678
+// sat at online:false, so dispatch's online=true filter found an empty pool
+// and no offer was ever sent).
+export async function setDriverOnlineFlag(me, v) {
+  if (!SUPABASE_ENABLED || !supabase || !me) return;
+  try {
+    const { error } = await supabase.from('driver_locations')
+      .update({ online: v, updated_at: new Date().toISOString() }).eq('driver_phone', me);
+    if (error) {
+      // first-ever session: no row yet — create it; real GPS overwrites coords in seconds
+      const i = await supabase.from('driver_locations').upsert(
+        { driver_phone: me, lat: 0, lng: 0, accuracy: null, source: 'fg', online: v, updated_at: new Date().toISOString() },
+        { onConflict: 'driver_phone' });
+      if (i.error) console.warn('online flag:', i.error.message);
+    }
+  } catch (e) { /* offline — next publish/heartbeat fixes it */ }
+}
+
 export async function dispatchTick(settings) {
   const iso = nowIso();
   const { data: rows } = await supabase.from('orders').select('*')
