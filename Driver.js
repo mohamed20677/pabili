@@ -48,7 +48,7 @@ export default function Driver() {
     try { const p = await takeProofPhoto({ kind, owner: phone }); if (p) then(p); } finally { setBusy(null); }
   };
 
-  const mine = s.orders.filter((o) => o.myRole === 'driver');
+  const mine = s.orders.filter((o) => o.myRole === 'driver' || o.driverPhone === phone || o.offerTo === phone); // V23: self-test visibility
   const offers = mine.filter((o) => o.status === 'driver_offer' && o.neg && o.neg.turn === 'me');
   const waiting = mine.filter((o) => o.status === 'driver_talk');
   const active = mine.filter((o) => o.driverPhone === phone && ['accepted', 'quote_review', 'vendor_talk', 'ready_pickup', 'picked_up', 'delivered'].includes(o.status));

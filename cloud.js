@@ -59,12 +59,14 @@ const toDbStatus = (ui) => ({
   finding_driver: 'finding_driver',
 }[ui] || 'finding_driver');
 
-// Ensures an auth uid + profiles row exist for this phone (proven chain:
-// anonymous signup → 200, profiles upsert {id} → 201). Everything the live DB
-// stores needs customer_id/user_id FKs to profiles.id → auth.users.
+// Ensures a profiles row exists for this phone and returns ITS id (V23:
+// SESSION FIRST — the phone lookup runs as an authenticated user, because a
+// pre-session lookup can be hidden by RLS → treated as "no profile" →
+// duplicate insert → 23505 profiles_phone_uidx). One row per phone: the
+// existing id is always reused, so orders/kyc keep valid FKs.
 async function ensureUid(me, name) {
   let uid = null;
-  try { const g = await supabase.auth.getUser(); uid = (g && g.data && g.data.user && g.data.user.id) || null; } catch (e) { /* no session yet */ }
+  try { const g = await supabase.auth.getUser(); uid = (g && g.data && g.data.user && g.data.user.id) || null; } catch (e) { uid = null; }
   if (!uid) {
     try {
       if (typeof supabase.auth.signInAnonymously === 'function') {
@@ -85,9 +87,26 @@ async function ensureUid(me, name) {
       uid = (j && j.user && j.user.id) || null;
     } catch (e) { /* reported below */ }
   }
+  let existing = null;
+  try {
+    const q = await supabase.from('profiles').select('id').eq('phone', me).maybeSingle();
+    existing = (q && q.data && q.data.id) || null;
+  } catch (e) { existing = null; }
+  if (existing) {
+    if (name) { try { await supabase.from('profiles').update({ name }).eq('id', existing); } catch (e) { /* cosmetic only */ } }
+    return existing;
+  }
   if (!uid) throw new Error('Sign-in failed — check internet and retry.');
   const p = await supabase.from('profiles').upsert({ id: uid, phone: me, name: name || null }, { onConflict: 'id' });
-  if (p.error) throw p.error;
+  if (p.error) {
+    // Lost a race or a row for this phone appeared meanwhile → reuse its id.
+    try {
+      const q2 = await supabase.from('profiles').select('id').eq('phone', me).maybeSingle();
+      const id2 = (q2 && q2.data && q2.data.id) || null;
+      if (id2) return id2;
+    } catch (e) { /* fall through */ }
+    throw p.error;
+  }
   return uid;
 }
 

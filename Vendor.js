@@ -23,7 +23,7 @@ export default function Vendor() {
     try { const p = await takeProofPhoto({ kind, owner }); if (p) then(p); } finally { setBusy(null); }
   };
 
-  const mine = s.orders.filter((o) => o.myRole === 'vendor');
+  const mine = s.orders.filter((o) => o.myRole === 'vendor' || o.vendorPhone === owner); // V23: self-test (same phone buys from its own store) must show here too
   const live = mine.filter((o) => !['completed', 'cancelled'].includes(o.status));
   const done = mine.filter((o) => o.status === 'completed');
   const earnings = (s.wallet.tx || []).filter((t) => t.kind === 'sale').reduce((a, t) => a + t.amount, 0);

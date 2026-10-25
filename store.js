@@ -52,7 +52,7 @@ function alertFor(o, prev) {
   const ride = o.kind === 'ride';
   const errand = o.kind === 'errand';
   const changed = prev !== o.status;
-  if (o.myRole === 'vendor') {
+  if (o.myRole === 'vendor' || (o.vendorPhone && o.vendorPhone === o.customerPhone)) { // V23: self-test alerts
     if (!prev && o.status === 'vendor_quote') return '🛍 New order for your store';
     if (changed && o.status === 'vendor_talk') return '💬 The customer countered your price';
     if (changed && o.status === 'accepted') return '🛵 Courier accepted — pack the order';
