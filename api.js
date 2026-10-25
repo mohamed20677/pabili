@@ -93,7 +93,7 @@ export async function saveProfileRemote(phone, patch) {
   const { error } = await supabase.from('profiles').upsert({ phone, ...patch }, { onConflict: 'phone' });
   if (error) {
     const m = String(error.message || error);
-    throw new Error(/avatar_url/.test(m) ? 'Column avatar_url is missing — run galabili-sql/setup-04-v16.sql in Supabase.' : m);
+    throw new Error(/avatar_url/.test(m) ? 'Column avatar_url is missing — run pabili-sql/setup-04-v16.sql in Supabase.' : m);
   }
   return { ok: true };
 }

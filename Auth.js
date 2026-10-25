@@ -1,7 +1,7 @@
 // Galabili PH — Auth screens: Login (green hero), OTP (4 boxes + timer), Terms consent.
 // Matches the reference screenshots exactly (same layout/colors), localized en/tl.
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Image, KeyboardAvoidingView, Pressable, ScrollView, View } from 'react-native';
+import { Alert, Image, Pressable, View } from 'react-native';
 import { ADMIN_CODE, ADMIN_PHONE, isAdminPhone, normalizePhone, toPHDigits, useT, validPhone, USER_TEST_CODE } from './lib';
 import { Btn, Card, Field, Txt } from './ui';
 
@@ -23,7 +23,7 @@ export function PhoneScreen({ onDone }) {
   };
 
   return (
-    <KeyboardAvoidingView behavior="padding" style={{ flex: 1, backgroundColor: '#008A44' }}>
+    <View style={{ flex: 1, backgroundColor: '#008A44' }}>
       {/* hero ~65% */}
       <View style={{ flex: 1.8, alignItems: 'center', justifyContent: 'center' }}>
         <View style={{ position: 'absolute', top: 14, left: 14, width: 30, height: 30, borderRadius: 15,
@@ -35,12 +35,11 @@ export function PhoneScreen({ onDone }) {
           <View style={{ backgroundColor: '#fff', borderRadius: 26, paddingVertical: 12, paddingHorizontal: 20 }}>
             <Image source={require('./assets/logo-lockup.png')} style={{ width: 168, height: 168 }} resizeMode="contain" />
           </View>
-          <Txt c="#fff" s={13} style={{ opacity: 0.92, marginTop: 12 }}>Everything delivered — rides, hotels and more.</Txt>
+          <Txt c="#fff" s={13} style={{ opacity: 0.92, marginTop: 12 }}>Any item, any store, any time.</Txt>
         </View>
       </View>
-      {/* bottom sheet ~35% — V31: ScrollView so the keyboard never hides the phone field */}
-      <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 28, borderTopRightRadius: 28, maxHeight: '62%' }}>
-        <ScrollView keyboardShouldPersistTaps="handled" style={{ padding: 22 }}>
+      {/* bottom sheet ~35% */}
+      <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 22 }}>
         <Txt b s={20}>{T('login')}</Txt>
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 14, borderWidth: 1,
                        borderColor: '#DCE5DF', borderRadius: 14, paddingHorizontal: 12 }}>
@@ -53,9 +52,8 @@ export function PhoneScreen({ onDone }) {
         <Txt c="#008A44" s={13} style={{ textAlign: 'center', marginTop: 14 }}>{T('social')}</Txt>
         <Txt c="#6B7A72" s={11} style={{ textAlign: 'center', marginTop: 16 }}>{T('termsNote')}</Txt>
         <Txt c="#B9C4BE" s={10} style={{ textAlign: 'center', marginTop: 6 }}>{T('testHint')}</Txt>
-        </ScrollView>
       </View>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 

@@ -122,7 +122,7 @@ export default function Driver() {
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
                 <Field value={counter[o.id] || ''} onChangeText={(v) => setCounter({ ...counter, [o.id]: v.replace(/[^0-9]/g, '') })}
-                       keyboardType="number-pad" placeholder="Your fare ₱ (±10% of the offer)" style={{ flex: 1, padding: 10 }} />
+                       keyboardType="number-pad" placeholder="Your fare ₱" style={{ flex: 1, padding: 10 }} />
                 <Btn small kind="ghost" title="Counter" disabled={!counter[o.id] || Number(counter[o.id]) === o.neg.amount}
                      onPress={() => { driverOfferAnswer(o, 'counter', Number(counter[o.id])); setCounter({ ...counter, [o.id]: '' }); }}
                      style={{ marginLeft: 8, marginTop: 0, paddingHorizontal: 14 }} />

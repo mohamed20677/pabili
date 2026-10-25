@@ -37,10 +37,6 @@ function Shell() {
   const [rideOpen, setRideOpen] = useState(false);
   const [intercityOpen, setIntercityOpen] = useState(false);
   const [hotelOpen, setHotelOpen] = useState(false);
-  // V31 EDGE FIX: RN SafeAreaView is a no-op on Android — pad the top with the
-  // real status-bar height so nothing hides under the camera cut-out, and keep
-  // every screen inside horizontal padding.
-  const sbH = StatusBar.currentHeight || 0;
 
   // V16: make sure the cloud profile row exists, then restore name + photo (e.g. after a reinstall)
   React.useEffect(() => {
@@ -79,7 +75,7 @@ function Shell() {
     : <Profile onOpenAddresses={() => setAddrOpen(true)} />;
 
   return (
-        <SafeAreaView style={{ flex: 1, backgroundColor: C.paper, paddingTop: sbH }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: C.paper }}>
       <StatusBar barStyle="dark-content" />
       {s.net === 'offline' && <View style={{ backgroundColor: C.bad, padding: 4 }}><Txt c="#fff" s={11} style={{ textAlign: 'center' }}>No connection — retrying…</Txt></View>}
       <View style={{ flex: 1 }}>{main}</View>
@@ -88,38 +84,38 @@ function Shell() {
         else setTab('home');
       }} />
       <Modal visible={cartOpen} animationType="slide" onRequestClose={() => setCartOpen(false)}>
-          <SafeAreaView style={{ flex: 1, paddingTop: sbH }}>
-            <CartScreen onClose={() => setCartOpen(false)} onPlace={() => { placeCartOrder(s.auth?.phone, 'wallet'); setCartOpen(false); setTab('orders'); }} />
-          </SafeAreaView>
+        <SafeAreaView style={{ flex: 1 }}>
+          <CartScreen onClose={() => setCartOpen(false)} onPlace={() => { placeCartOrder(s.auth?.phone, 'wallet'); setCartOpen(false); setTab('orders'); }} />
+        </SafeAreaView>
       </Modal>
       <Modal visible={newOpen} animationType="slide" onRequestClose={() => setNewOpen(false)}>
-          <SafeAreaView style={{ flex: 1, paddingTop: sbH }}>
-            <OrderForm preselect={preselect} preselectStore={preselectStore} onClose={() => setNewOpen(false)} onPlaced={() => setTab('orders')} />
-          </SafeAreaView>
+        <SafeAreaView style={{ flex: 1 }}>
+          <OrderForm preselect={preselect} preselectStore={preselectStore} onClose={() => setNewOpen(false)} onPlaced={() => setTab('orders')} />
+        </SafeAreaView>
       </Modal>
       <Modal visible={rideOpen} animationType="slide" onRequestClose={() => setRideOpen(false)}>
-          <SafeAreaView style={{ flex: 1, paddingTop: sbH }}>
-            <RideForm onClose={() => setRideOpen(false)} onPlaced={() => setTab('orders')} />
-          </SafeAreaView>
+        <SafeAreaView style={{ flex: 1 }}>
+          <RideForm onClose={() => setRideOpen(false)} onPlaced={() => setTab('orders')} />
+        </SafeAreaView>
       </Modal>
       <Modal visible={intercityOpen} animationType="slide" onRequestClose={() => setIntercityOpen(false)}>
-          <SafeAreaView style={{ flex: 1, paddingTop: sbH }}>
-            <IntercityForm onClose={() => setIntercityOpen(false)} onPlaced={() => setTab('orders')} />
-          </SafeAreaView>
+        <SafeAreaView style={{ flex: 1 }}>
+          <IntercityForm onClose={() => setIntercityOpen(false)} onPlaced={() => setTab('orders')} />
+        </SafeAreaView>
       </Modal>
       <Modal visible={hotelOpen} animationType="slide" onRequestClose={() => setHotelOpen(false)}>
-          <SafeAreaView style={{ flex: 1, paddingTop: sbH }}>
-            <HotelsScreen onClose={() => setHotelOpen(false)} />
-          </SafeAreaView>
+        <SafeAreaView style={{ flex: 1 }}>
+          <HotelsScreen onClose={() => setHotelOpen(false)} />
+        </SafeAreaView>
       </Modal>
       <Modal visible={!!storesCat} animationType="slide" onRequestClose={() => setStoresCat(null)}>
-          <SafeAreaView style={{ flex: 1, paddingTop: sbH }}>
-            <StoresByCategory category={storesCat} onBack={() => setStoresCat(null)}
+        <SafeAreaView style={{ flex: 1 }}>
+          <StoresByCategory category={storesCat} onBack={() => setStoresCat(null)}
             onPick={(s) => { setStoresCat(null); setPreselect(null); setPreselectStore(s); setNewOpen(true); }} />
         </SafeAreaView>
       </Modal>
       <Modal visible={addrOpen} animationType="slide" onRequestClose={() => setAddrOpen(false)}>
-          <SafeAreaView style={{ flex: 1, paddingTop: sbH }}>
+        <SafeAreaView style={{ flex: 1 }}>
           <AddressesScreen onClose={() => setAddrOpen(false)} />
         </SafeAreaView>
       </Modal>

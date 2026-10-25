@@ -304,7 +304,7 @@ export function StoreProvider({ children }) {
       const cur = sRef.current;
       const store = cur.stores.find((x) => x.id === d.storeId);
       if (!store) throw new Error('Choose a store first.');
-      return C.placeOrderCloud({ me: me(), myName: cur.profile.name, store, text: d.text, fee: d.fee, payVia: d.payVia || 'cash', dropoff: d.dropoff, settings: sRef.current.settings });
+      return C.placeOrderCloud({ me: me(), myName: cur.profile.name, store, text: d.text, fee: d.fee, payVia: d.payVia || 'cash', dropoff: d.dropoff });
     }),
     placeErrand: (d) => run('Errand', async () => {
       guardFrozen();
@@ -312,7 +312,7 @@ export function StoreProvider({ children }) {
       return C.placeErrandCloud({ me: me(), myName: cur.profile.name, text: d.text, hint: d.hint, budget: d.budget, fee: d.fee, payVia: d.payVia || 'cash', dropoff: d.dropoff });
     }),
     shopperQuote: (o0, price, photo) => run('Price', () => C.shopperQuote(ord(o0), me(), price, photo)),
-    shopperRespond: (o0, action, amount) => run('Price', () => C.shopperRespond(ord(o0), me(), action, amount, sRef.current.settings)),
+    shopperRespond: (o0, action, amount) => run('Price', () => C.shopperRespond(ord(o0), me(), action, amount)),
     placeRide: (d) => run('Ride request', async () => {
       guardFrozen();
       const cur = sRef.current, r = cur.settings.ride;
@@ -324,7 +324,7 @@ export function StoreProvider({ children }) {
     quoteAnswer: (o0, action, amount) => run('Quote', async () => {
       const o = ord(o0);
       if (action === 'accept') needWallet(o.payVia, o.neg.amount + o.fee);
-      return C.customerQuote(o, action, amount, sRef.current.settings);
+      return C.customerQuote(o, action, amount);
     }),
     driverAnswer: (o0, action, amount) => run('Courier offer', async () => C.customerDriverAnswer(ord(o0), action, amount, sRef.current.settings)),
     cancelOrder: (o0) => run('Cancel', () => C.cancelOrderCloud(ord(o0))),
@@ -333,7 +333,7 @@ export function StoreProvider({ children }) {
 
     // ---- vendor ----
     vendorQuote: (o0, price, photo) => run('Quote', () => C.vendorQuote(ord(o0), price, photo)),
-    vendorRespond: (o0, action, amount) => run('Price', () => C.vendorRespond(ord(o0), action, amount, sRef.current.settings)),
+    vendorRespond: (o0, action, amount) => run('Price', () => C.vendorRespond(ord(o0), action, amount)),
     vendorDecline: (o0) => run('Order', () => C.vendorDecline(ord(o0))),
     vendorPacked: (o0, photo) => run('Packed', () => C.vendorPacked(ord(o0), photo)),
 

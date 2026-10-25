@@ -57,9 +57,9 @@ async function shrink(asset) {
 function explain(err) {
   const m = String((err && err.message) || err || '');
   if (/row-level security|violates|not authorized|403|401/i.test(m))
-    return 'Storage refused the upload (policy). Run galabili-sql/setup-04-v16.sql in the Supabase SQL editor, then try again.';
+    return 'Storage refused the upload (policy). Run pabili-sql/setup-04-v16.sql in the Supabase SQL editor, then try again.';
   if (/bucket not found|404/i.test(m))
-    return 'Storage bucket is missing. Run galabili-sql/setup-04-v16.sql in the Supabase SQL editor, then try again.';
+    return 'Storage bucket is missing. Run pabili-sql/setup-04-v16.sql in the Supabase SQL editor, then try again.';
   if (/network|failed to fetch|timed out|timeout/i.test(m))
     return 'No internet or the connection is too slow. Check your data and try again.';
   return m || 'Unknown upload error.';
