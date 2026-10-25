@@ -59,10 +59,19 @@ const toDbStatus = (ui) => ({
   finding_driver: 'finding_driver',
 }[ui] || 'finding_driver');
 
-// Ensures an auth uid + profiles row exist for this phone (proven chain:
-// anonymous signup → 200, profiles upsert {id} → 201). Everything the live DB
-// stores needs customer_id/user_id FKs to profiles.id → auth.users.
+// Ensures a profiles row exists for this phone and returns ITS id (V22:
+// one row per phone — reuse the existing id; a second insert for the same
+// phone hits 23505 profiles_phone_uidx, reproduced live 2026-10-25).
 async function ensureUid(me, name) {
+  let existing = null;
+  try {
+    const q = await supabase.from('profiles').select('id').eq('phone', me).maybeSingle();
+    existing = (q && q.data && q.data.id) || null;
+  } catch (e) { existing = null; }
+  if (existing) {
+    if (name) { try { await supabase.from('profiles').update({ name }).eq('id', existing); } catch (e) { /* cosmetic only */ } }
+    return existing;
+  }
   let uid = null;
   try { const g = await supabase.auth.getUser(); uid = (g && g.data && g.data.user && g.data.user.id) || null; } catch (e) { /* no session yet */ }
   if (!uid) {
@@ -87,7 +96,15 @@ async function ensureUid(me, name) {
   }
   if (!uid) throw new Error('Sign-in failed — check internet and retry.');
   const p = await supabase.from('profiles').upsert({ id: uid, phone: me, name: name || null }, { onConflict: 'id' });
-  if (p.error) throw p.error;
+  if (p.error) {
+    // Lost a race or a row for this phone appeared meanwhile → reuse its id.
+    try {
+      const q2 = await supabase.from('profiles').select('id').eq('phone', me).maybeSingle();
+      const id2 = (q2 && q2.data && q2.data.id) || null;
+      if (id2) return id2;
+    } catch (e) { /* fall through */ }
+    throw p.error;
+  }
   return uid;
 }
 
