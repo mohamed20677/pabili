@@ -17,7 +17,14 @@ export function mapOrder(r, me) {
   const mine = r.customer_phone === me;
   const asVendor = !mine && r.vendor_phone === me;
   const asDriver = !mine && !asVendor && (r.driver_phone === me || r.offer_to === me);
-  const myRole = mine ? 'customer' : asVendor ? 'vendor' : asDriver ? 'driver' : 'observer';
+  // V24 ROLE-SET FIX: one phone can hold SEVERAL roles on the same order
+  // (self-test: the same number is customer AND vendor). Collect every role,
+  // so no board (store/driver/customer) ever hides an order it is part of.
+  const myRoles = [];
+  if (r.customer_phone === me) myRoles.push('customer');
+  if (r.vendor_phone === me) myRoles.push('vendor');
+  if (r.driver_phone === me || r.offer_to === me) myRoles.push('driver');
+  const myRole = myRoles[0] || (mine ? 'customer' : asVendor ? 'vendor' : asDriver ? 'driver' : 'observer');
   const n = r.negotiation || null;
   // V21 LIVE-DB ADAPTER (proven live on mmhneaixcyvmciyioxeo 2026-10-25):
   // the live orders CHECK constraints only accept kind='buy' and a small
@@ -27,12 +34,12 @@ export function mapOrder(r, me) {
   const kind = r.category === 'Ride' ? 'ride' : r.category === 'Errand' ? 'errand' : 'order';
   const neg = n && n.amount != null ? {
     phase: n.phase, amount: Number(n.amount), by: n.by, final: !!n.final, awaiting: n.awaiting,
-    turn: n.awaiting === myRole ? 'me' : 'them',
+    turn: myRoles.includes(n.awaiting) ? 'me' : 'them',  // V24: any of my roles
     deadline: n.phase === 'driver' ? ms(r.offer_deadline) : null,
     history: n.history || [],
   } : null;
   return {
-    id: r.id, kind, mine, myRole, category: r.category, items: r.items,
+    id: r.id, kind, mine, myRole, myRoles, category: r.category, items: r.items,
     pickup: r.pickup_addr, dropoff: r.dropoff_addr,
     pickupLat: num(r.pickup_lat), pickupLng: num(r.pickup_lng), dropLat: num(r.dropoff_lat), dropLng: num(r.dropoff_lng),
     fee: Number(r.fee || 0), price: Number(r.price || 0), status: ui,

@@ -48,17 +48,20 @@ const errMsg = (e) => {
 };
 
 // What should this phone hear about when an order it is part of changes?
+// V24: use the full role set — a self-test phone (customer + vendor/driver on
+// the same order) must get alerts for EVERY side it plays.
 function alertFor(o, prev) {
+  const roles = o.myRoles || [o.myRole];
   const ride = o.kind === 'ride';
   const errand = o.kind === 'errand';
   const changed = prev !== o.status;
-  if (o.myRole === 'vendor' || (o.vendorPhone && o.vendorPhone === o.customerPhone)) { // V23: self-test alerts
+  if (roles.includes('vendor') && o.vendorPhone) {
     if (!prev && o.status === 'vendor_quote') return '🛍 New order for your store';
     if (changed && o.status === 'vendor_talk') return '💬 The customer countered your price';
     if (changed && o.status === 'accepted') return '🛵 Courier accepted — pack the order';
     if (changed && o.status === 'completed') return '✅ Order completed — check your wallet';
   }
-  if (o.myRole === 'driver') {
+  if (roles.includes('driver')) {
     if (o.status === 'driver_offer' && o.neg && o.neg.turn === 'me' && prev !== 'driver_offer') return ride ? '🚕 New ride request' : '🛵 New delivery offer';
     if (changed && prev === 'driver_talk' && o.status === 'accepted') return '✅ The customer accepted your fare';
     if (changed && o.status === 'vendor_talk' && errand) return '💬 The customer countered your item price';
@@ -67,7 +70,7 @@ function alertFor(o, prev) {
     if (changed && o.status === 'completed') return '✅ Paid — check your wallet';
     if (changed && o.status === 'cancelled') return 'Order cancelled by the customer';
   }
-  if (o.myRole === 'customer' && changed) {
+  if (roles.includes('customer') && changed) {
     if (o.status === 'quote_review') return errand ? '🧾 Your courier found it — check the price and photo' : '🧾 The store sent its price and photo';
     if (o.status === 'finding_driver' && (prev === 'quote_review' || prev === 'vendor_talk')) return '👍 Price agreed — finding a courier';
     if (o.status === 'driver_talk' && o.neg) return `🛵 The ${ride ? 'driver' : 'courier'} asks ₱${o.neg.amount}`;
