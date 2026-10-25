@@ -9,6 +9,17 @@ const ms = (t) => (t ? new Date(t).getTime() : null);
 const num = (x) => (x == null ? null : Number(x));
 const plusSecs = (s) => new Date(Date.now() + s * 1000).toISOString();
 
+// V31 ORDER SPEC — negotiation guardrail: every counter-offer is clamped to
+// ±10% of the last agreed amount, so haggling stays a negotiation, not a reset.
+export const NEG_PCT = 0.10;
+export const clampNeg = (base, amount) => {
+  const b = Math.max(0, Number(base) || 0);
+  const lo = Math.round(b * (1 - NEG_PCT)), hi = Math.round(b * (1 + NEG_PCT));
+  const a = Math.round(Number(amount) || 0);
+  const v = Math.min(hi, Math.max(lo, a));
+  return { value: v, clamped: v !== a, lo, hi };
+};
+
 export const SEARCHING = ['finding_driver', 'driver_offer', 'driver_talk'];
 export const OPEN_FOR_CANCEL = ['vendor_quote', 'quote_review', 'vendor_talk', ...SEARCHING];
 
@@ -183,11 +194,13 @@ export async function fetchBroadcasts() {
 }
 
 // ---------------------------------------------------------------- store orders
-export async function placeOrderCloud({ me, myName, store, text, fee, payVia, dropoff }) {
+export async function placeOrderCloud({ me, myName, store, text, fee, payVia, dropoff, settings }) {
   // V21 live-DB: kind must be 'buy', customer_id + request are NOT NULL,
   // initial UI state vendor_quote rides in negotiation.ui (status stays
   // finding_driver, which is the only allowed pre-pickup status).
+  // V31 ORDER SPEC: the store quote window is a HARD deadline (vendorSecs).
   const uid = await ensureUid(me, myName);
+  const vSecs = (settings && settings.vendorSecs) || 60;
   const { data, error } = await supabase.from('orders').insert({
     kind: 'buy', customer_id: uid, request: text,
     customer_phone: me, customer_name: myName, vendor_phone: store.ownerPhone, store_id: store.id,
@@ -195,6 +208,7 @@ export async function placeOrderCloud({ me, myName, store, text, fee, payVia, dr
     pickup_addr: store.address || store.name, pickup_lat: store.lat, pickup_lng: store.lng,
     dropoff_addr: dropoff.addr, dropoff_lat: dropoff.lat || null, dropoff_lng: dropoff.lng || null,
     fee, price: 0, status: 'finding_driver', awaiting: 'vendor', pay_via: payVia, photos: {}, declined: [],
+    offer_deadline: plusSecs(vSecs),
     negotiation: { ui: 'vendor_quote' }, updated_at: nowIso(),  // V27: legacy table has no default
   }).select().single();
   if (error) throw error;
@@ -205,25 +219,35 @@ export const vendorQuote = (o, price, photo) => guarded(o.id, ['vendor_quote'], 
   negotiation: mkNeg('vendor', 'customer', price, 'vendor', 'Store quote + product photo', null),
 });
 export const vendorDecline = (o) => guarded(o.id, ['vendor_quote', 'vendor_talk'], { status: 'cancelled', negotiation: null, awaiting: null });
-export async function vendorRespond(o, action, amount) {
+export async function vendorRespond(o, action, amount, settings) {
   const last = [...((o.neg && o.neg.history) || [])].reverse().find((h) => h.by === 'vendor');
   const keep = last ? last.amount : o.price;
-  if (action === 'accept') return guarded(o.id, ['vendor_talk'], { price: o.neg.amount, status: 'finding_driver', negotiation: null, awaiting: null, declined: [] });
-  if (action === 'counter') return guarded(o.id, ['vendor_talk'], { price: amount, status: 'quote_review', awaiting: 'customer',
-    negotiation: mkNeg('vendor', 'customer', amount, 'vendor', 'Store counter', o.neg) });
+  if (action === 'accept') return guarded(o.id, ['vendor_talk'], { price: o.neg.amount, status: 'finding_driver', negotiation: null, awaiting: null, declined: [], offer_deadline: null });
+  if (action === 'counter') {
+    const c = clampNeg(keep, amount); // V31: ±10% of the store's own last price
+    return guarded(o.id, ['vendor_talk'], { price: c.value, status: 'quote_review', awaiting: 'customer',
+      negotiation: mkNeg('vendor', 'customer', c.value, 'vendor', 'Store counter (±10% rule)', o.neg) });
+  }
   return guarded(o.id, ['vendor_talk'], { price: keep, status: 'quote_review', awaiting: 'customer',
     negotiation: mkNeg('vendor', 'customer', keep, 'vendor', 'Store keeps its price (final)', o.neg, { final: true }) });
 }
-export async function customerQuote(o, action, amount) {
+export async function customerQuote(o, action, amount, settings) {
+  const vSecs = (settings && settings.vendorSecs) || 60;
   if (o.kind === 'errand') { // the courier is the one who found the item: approving it = "go ahead and buy it"
-    if (action === 'accept') return guarded(o.id, ['quote_review'], { price: o.neg.amount, status: 'ready_pickup', negotiation: null, awaiting: null });
-    if (action === 'counter') return guarded(o.id, ['quote_review'], { status: 'vendor_talk', awaiting: 'driver',
-      negotiation: mkNeg('shopper', 'driver', amount, 'customer', 'Customer counter', o.neg) });
+    if (action === 'accept') return guarded(o.id, ['quote_review'], { price: o.neg.amount, status: 'ready_pickup', negotiation: null, awaiting: null, offer_deadline: null });
+    if (action === 'counter') {
+      const c = clampNeg(o.neg.amount, amount); // V31: ±10% rule
+      return guarded(o.id, ['quote_review'], { status: 'vendor_talk', awaiting: 'driver', offer_deadline: plusSecs(vSecs),
+        negotiation: mkNeg('shopper', 'driver', c.value, 'customer', 'Customer counter (±10% rule)', o.neg) });
+    }
     return cancelOrderCloud(o);
   }
-  if (action === 'accept') return guarded(o.id, ['quote_review'], { price: o.neg.amount, status: 'finding_driver', negotiation: null, awaiting: null, declined: [] });
-  if (action === 'counter') return guarded(o.id, ['quote_review'], { status: 'vendor_talk', awaiting: 'vendor',
-    negotiation: mkNeg('vendor', 'vendor', amount, 'customer', 'Customer counter', o.neg) });
+  if (action === 'accept') return guarded(o.id, ['quote_review'], { price: o.neg.amount, status: 'finding_driver', negotiation: null, awaiting: null, declined: [], offer_deadline: null });
+  if (action === 'counter') {
+    const c = clampNeg(o.neg.amount, amount); // V31: ±10% rule
+    return guarded(o.id, ['quote_review'], { status: 'vendor_talk', awaiting: 'vendor', offer_deadline: plusSecs(vSecs),
+      negotiation: mkNeg('vendor', 'vendor', c.value, 'customer', 'Customer counter (±10% rule)', o.neg) });
+  }
   return cancelOrderCloud(o);
 }
 export const vendorPacked = (o, photo) => guarded(o.id, ['accepted'], { status: 'ready_pickup', photos: { ...o.photos, packed: photo } });
@@ -256,9 +280,12 @@ export const shopperQuote = (o, me, price, photo) => guarded(o.id, ['accepted'],
 export async function shopperRespond(o, me, action, amount) {
   const last = [...((o.neg && o.neg.history) || [])].reverse().find((h) => h.by === 'driver');
   const keep = last ? last.amount : o.price;
-  if (action === 'accept') return guarded(o.id, ['vendor_talk'], { price: o.neg.amount, status: 'ready_pickup', negotiation: null, awaiting: null }, { driver_phone: me });
-  if (action === 'counter') return guarded(o.id, ['vendor_talk'], { price: amount, status: 'quote_review', awaiting: 'customer',
-    negotiation: mkNeg('shopper', 'customer', amount, 'driver', 'Courier counter', o.neg) }, { driver_phone: me });
+  if (action === 'accept') return guarded(o.id, ['vendor_talk'], { price: o.neg.amount, status: 'ready_pickup', negotiation: null, awaiting: null, offer_deadline: null }, { driver_phone: me });
+  if (action === 'counter') {
+    const c = clampNeg(keep, amount); // V31: ±10% rule
+    return guarded(o.id, ['vendor_talk'], { price: c.value, status: 'quote_review', awaiting: 'customer',
+      negotiation: mkNeg('shopper', 'customer', c.value, 'driver', 'Courier counter (±10% rule)', o.neg) }, { driver_phone: me });
+  }
   return guarded(o.id, ['vendor_talk'], { price: keep, status: 'quote_review', awaiting: 'customer',
     negotiation: mkNeg('shopper', 'customer', keep, 'driver', 'Courier keeps the price (final)', o.neg, { final: true }) }, { driver_phone: me });
 }
@@ -289,19 +316,27 @@ export async function driverRespond(o, me, who, action, amount, settings) {
     return guarded(o.id, ['driver_offer'], { status: 'accepted', driver_phone: me, driver_name: who.name, driver_vehicle: who.vehicle,
       fee: o.neg.amount, negotiation: null, awaiting: null, offer_to: null, offer_deadline: null }, { offer_to: me });
   }
-  if (action === 'counter') return guarded(o.id, ['driver_offer'], { status: 'driver_talk', awaiting: 'customer',
-    negotiation: mkNeg('driver', 'customer', amount, 'driver', 'Courier counter', o.neg), offer_deadline: plusSecs(settings.customerSecs || 60) }, { offer_to: me });
+  if (action === 'counter') {
+    const c = clampNeg(o.neg.amount, amount); // V31: ±10% rule
+    return guarded(o.id, ['driver_offer'], { status: 'driver_talk', awaiting: 'customer',
+      negotiation: mkNeg('driver', 'customer', c.value, 'driver', 'Courier counter (±10% rule)', o.neg), offer_deadline: plusSecs(settings.customerSecs || 60) }, { offer_to: me });
+  }
   return guarded(o.id, ['driver_offer', 'driver_talk'], { status: 'finding_driver', offer_to: null, offer_deadline: null,
     declined: [...o.declined, me], negotiation: null, awaiting: null }, { offer_to: me });
 }
 export async function customerDriverAnswer(o, action, amount, settings) {
   if (action === 'accept') {
+    // V31 ORDER SPEC: the customer's answer window is a hard deadline too.
+    if (o.offerDeadline && Date.now() > o.offerDeadline + 2000) throw new Error('This negotiation window has expired. The order was refreshed — please check its status.');
     const { data: p } = await supabase.from('profiles').select('name,vehicle,plate').eq('phone', o.offerTo).maybeSingle();
     return guarded(o.id, ['driver_talk'], { status: 'accepted', driver_phone: o.offerTo, driver_name: p && p.name,
       driver_vehicle: vehicleLabel(p), fee: o.neg.amount, negotiation: null, awaiting: null, offer_to: null, offer_deadline: null });
   }
-  if (action === 'counter') return guarded(o.id, ['driver_talk'], { status: 'driver_offer', awaiting: 'driver', fee: amount,
-    negotiation: mkNeg('driver', 'driver', amount, 'customer', 'Customer counter', o.neg), offer_deadline: plusSecs(settings.offerSecs || 30) });
+  if (action === 'counter') {
+    const c = clampNeg(o.neg.amount, amount); // V31: ±10% rule
+    return guarded(o.id, ['driver_talk'], { status: 'driver_offer', awaiting: 'driver', fee: c.value,
+      negotiation: mkNeg('driver', 'driver', c.value, 'customer', 'Customer counter (±10% rule)', o.neg), offer_deadline: plusSecs(settings.offerSecs || 30) });
+  }
   return guarded(o.id, ['driver_talk'], { status: 'finding_driver', offer_to: null, offer_deadline: null,
     declined: [...o.declined, o.offerTo], negotiation: null, awaiting: null });
 }
@@ -379,7 +414,32 @@ export async function dispatchTick(settings) {
     // V21: only orders whose UI state is truly finding_driver are dispatched
     // (vendor-quote/negotiation/accepted orders are stored as finding_driver).
     const rui = (r.negotiation && r.negotiation.ui) || r.status;
-    if (rui !== 'finding_driver' || r.driver_phone) continue;
+    if (rui !== 'finding_driver' || r.driver_phone) {
+      // V31 ORDER SPEC — hard negotiation windows, enforced by dispatch:
+      // 1) the store never answered the quote in time → the order cancels itself.
+      // 2) the store never answered the customer's counter in time → the store's
+      //    last price stands (final) and the customer decides again.
+      if (rui === 'vendor_quote') {
+        const dl = ms(r.offer_deadline);
+        if (dl && Date.now() > dl + 2000) {
+          const { data } = await supabase.from('orders').update({ status: 'cancelled', awaiting: null, negotiation: { ui: 'cancelled' }, updated_at: nowIso() })
+            .eq('id', r.id).eq('status', 'finding_driver').select();
+          if (data && data.length) changed += 1;
+        }
+      } else if (rui === 'vendor_talk') {
+        const dl = ms(r.offer_deadline);
+        if (dl && Date.now() > dl + 2000) {
+          const hist = (r.negotiation && r.negotiation.history) || [];
+          const lastV = [...hist].reverse().find((h) => h.by === 'vendor' || h.by === 'driver' || h.by === 'shopper');
+          const keep = lastV ? lastV.amount : Number(r.price) || 0;
+          const neg = { ...mkNeg('vendor', 'customer', keep, 'vendor', 'Time is up — the store price stands (final)', r.negotiation), ui: 'quote_review', final: true };
+          const { data } = await supabase.from('orders').update({ status: 'quote_review', awaiting: 'customer', price: keep, offer_deadline: null, negotiation: neg, updated_at: nowIso() })
+            .eq('id', r.id).eq('status', 'finding_driver').select();
+          if (data && data.length) changed += 1;
+        }
+      }
+      continue;
+    }
     const declined = new Set(r.declined || []);
     const wasOffered = (r.status === 'driver_offer' || r.status === 'driver_talk') && r.offer_to;
     if (wasOffered) declined.add(r.offer_to); // an unanswered offer counts as a pass
@@ -430,35 +490,50 @@ export function mapIntercity(r, me) {
     created: ms(r.created_at),
   };
 }
+const tableHint = (e, sqlFile) => {
+  // V31: PGRST205 = the feature's tables were never created on this project —
+  // say exactly which SQL file to run instead of a raw PostgREST code.
+  const m = String((e && e.message) || e || '');
+  return /PGRST205|Could not find the table/i.test(m)
+    ? 'This feature is not set up on the server yet — run galabili-sql/' + sqlFile + ' in the Supabase SQL editor first, then retry.'
+    : m;
+};
 export async function fetchIntercityAll(me) {
-  const { data: reqs, error } = await supabase.from('intercity_requests')
-    .select('*').order('created_at', { ascending: false }).limit(60);
-  if (error) throw error;
-  const ids = (reqs || []).map((r) => r.id);
-  let offers = [];
-  if (ids.length) {
-    const { data: ofs } = await supabase.from('intercity_offers').select('*').in('request_id', ids).order('price', { ascending: true });
-    offers = ofs || [];
+  try {
+    const { data: reqs, error } = await supabase.from('intercity_requests')
+      .select('*').order('created_at', { ascending: false }).limit(60);
+    if (error) throw error;
+    const ids = (reqs || []).map((r) => r.id);
+    let offers = [];
+    if (ids.length) {
+      const { data: ofs } = await supabase.from('intercity_offers').select('*').in('request_id', ids).order('price', { ascending: true });
+      offers = ofs || [];
+    }
+    return (reqs || []).map((r) => {
+      const t = mapIntercity(r, me);
+      t.offers = offers.filter((o) => o.request_id === r.id).map((o) => ({
+        id: o.id, driverPhone: o.driver_phone, driverName: o.driver_name, price: Number(o.price),
+        message: o.message || '', status: o.status || 'sent', ts: ms(o.created_at),
+      }));
+      t.bookedOffer = (t.offers.find((o) => o.id === t.bookedOfferId)) || null;
+      return t;
+    });
+  } catch (e) {
+    if (/PGRST205|Could not find the table/i.test(String((e && e.message) || e))) return []; // tab shows empty; placing surfaces the setup hint
+    throw e;
   }
-  return (reqs || []).map((r) => {
-    const t = mapIntercity(r, me);
-    t.offers = offers.filter((o) => o.request_id === r.id).map((o) => ({
-      id: o.id, driverPhone: o.driver_phone, driverName: o.driver_name, price: Number(o.price),
-      message: o.message || '', status: o.status || 'sent', ts: ms(o.created_at),
-    }));
-    t.bookedOffer = (t.offers.find((o) => o.id === t.bookedOfferId)) || null;
-    return t;
-  });
 }
 export async function placeIntercityCloud({ me, myName, fromCity, toCity, date, passengers, note }) {
-  const uid = await ensureUid(me, myName);
-  const { data, error } = await supabase.from('intercity_requests').insert({
-    customer_id: uid, customer_phone: me, customer_name: myName,
-    from_city: fromCity, to_city: toCity, travel_date: date,
-    passengers: passengers || 1, note: note || null, status: 'open',
-  }).select().single();
-  if (error) throw error;
-  return data;
+  try {
+    const uid = await ensureUid(me, myName);
+    const { data, error } = await supabase.from('intercity_requests').insert({
+      customer_id: uid, customer_phone: me, customer_name: myName,
+      from_city: fromCity, to_city: toCity, travel_date: date,
+      passengers: passengers || 1, note: note || null, status: 'open',
+    }).select().single();
+    if (error) throw error;
+    return data;
+  } catch (e) { throw new Error(tableHint(e, 'setup-07-intercity.sql')); }
 }
 export async function cancelIntercityCloud(t) {
   // Conditional update: only an OPEN request can be cancelled.
@@ -623,16 +698,18 @@ export async function placeHotelBookingCloud({ me, myName, hotel, guestType, nat
   if (String(checkIn) < today) throw new Error('Check-in cannot be in the past.');
   const nights = Math.round((new Date(checkOut + 'T00:00:00Z') - new Date(checkIn + 'T00:00:00Z')) / 86400000);
   if (!Number.isFinite(nights) || nights < 1) throw new Error('Check-out must be after check-in.');
-  const uid = await ensureUid(me, myName);
-  const total = Number(hotel.price || 0) * nights * Math.max(1, rooms || 1);
-  const { data, error } = await supabase.from('hotel_bookings').insert({
-    hotel_id: hotel.id, guest_id: uid, guest_phone: me, guest_name: myName,
-    guest_type: guestType || 'tourist', nationality: nationality || null,
-    check_in: checkIn, check_out: checkOut, guests: guests || 1, rooms: rooms || 1,
-    nights, total_price: total, contact: contact || null, note: note || null, status: 'pending',
-  }).select().single();
-  if (error) throw error;
-  return data;
+  try {
+    const uid = await ensureUid(me, myName);
+    const total = Number(hotel.price || 0) * nights * Math.max(1, rooms || 1);
+    const { data, error } = await supabase.from('hotel_bookings').insert({
+      hotel_id: hotel.id, guest_id: uid, guest_phone: me, guest_name: myName,
+      guest_type: guestType || 'tourist', nationality: nationality || null,
+      check_in: checkIn, check_out: checkOut, guests: guests || 1, rooms: rooms || 1,
+      nights, total_price: total, contact: contact || null, note: note || null, status: 'pending',
+    }).select().single();
+    if (error) throw error;
+    return data;
+  } catch (e) { throw new Error(tableHint(e, 'setup-08-hotels.sql')); }
 }
 export async function cancelHotelBookingCloud(b) {
   // Conditional update: only a PENDING booking can be cancelled by the guest.

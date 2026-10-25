@@ -110,7 +110,7 @@ export function NegotiationBox({ title, amount, note, onAccept, onCounter, onRef
       </View>
       {canCounter && onCounter ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
-          <Field value={v} onChangeText={(x) => setV(x.replace(/[^0-9]/g, ''))} keyboardType="number-pad" placeholder="Your offer ₱" style={{ flex: 1, padding: 10 }} />
+          <Field value={v} onChangeText={(x) => setV(x.replace(/[^0-9]/g, ''))} keyboardType="number-pad" placeholder="Your offer ₱ (±10%)" style={{ flex: 1, padding: 10 }} />
           <Btn small kind="ghost" title="Counter" disabled={!v || Number(v) === amount}
                onPress={() => go(async () => { await onCounter(Number(v)); setV(''); })} style={{ marginLeft: 8, marginTop: 0, paddingHorizontal: 14 }} />
         </View>
@@ -312,6 +312,7 @@ export function HomeScreen({ goNew, goStores, goCart, goRide, goHotels, goInterc
         </View>
       </Pressable>
 
+      <View style={{ paddingHorizontal: 14 }}>
       <Section title={'🚩 ' + T('nearYou')}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           <Pressable onPress={() => goNew(null)} style={{ width: 200, marginRight: 12 }}>
@@ -378,9 +379,21 @@ export function OrderForm({ preselectStore, onClose, onPlaced }) {
   const [store, setStore] = useState(preselectStore || null);
   const [busy, setBusy] = useState(false);
   const f = Number(fee) || 0;
+  const [feeEst, setFeeEst] = useState(null);
   const addr = (s.addresses || []).find((a) => a.default) || (s.addresses || [])[0];
   const stores = listStoresAll();
   const errand = mode === 'errand';
+  // V31 ORDER SPEC: delivery fee by zone + straight-line distance (same rule as rides).
+  const suggestFee = () => {
+    setFeeEst({ busy: true });
+    const dest = { lat: addr && addr.lat, lng: addr && addr.lng };
+    const origin = (!errand && store) ? { lat: store.lat, lng: store.lng } : dest;
+    const km = distanceKm(origin, dest);
+    if (km == null) { setFeeEst({ km: null, error: 'Save the delivery address with GPS (Use my current location) so the fee can be computed by distance.' }); return; }
+    const zone = km <= 3 ? 'Zone 1 · near' : km <= 8 ? 'Zone 2 · mid' : 'Zone 3 · far';
+    const suggested = Math.max(20, Math.round((20 + 10 * km) / 5) * 5);
+    setFeeEst({ km, zone, fee: suggested }); setFee(String(suggested));
+  };
   const place = async () => {
     setBusy(true);
     const dropoff = { addr: addr.addr, lat: addr.lat, lng: addr.lng };
@@ -439,6 +452,11 @@ export function OrderForm({ preselectStore, onClose, onPlaced }) {
           ) : <Card><Txt s={13} c={C.bad}>Add a delivery address first (My Page → Saved addresses).</Txt></Card>}
         </Section>
         <Section title={errand ? '3 · Courier fee (delivery only)' : T('feeOffer')}>
+          {feeEst && feeEst.error && <Txt s={12} c={C.amber} style={{ marginBottom: 6 }}>{feeEst.error}</Txt>}
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+            <Btn small kind="ghost" busy={feeEst && feeEst.busy} title="📡 Suggest fee by distance" onPress={suggestFee} style={{ marginRight: 10, marginTop: 0 }} />
+            {feeEst && feeEst.km != null && <Txt s={12} c={C.green} style={{ flex: 1 }}>≈ {fmtKm(feeEst.km)} · {feeEst.zone} · suggested {peso(feeEst.fee)}</Txt>}
+          </View>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Field value={fee} onChangeText={(v) => setFee(v.replace(/[^0-9]/g, ''))} keyboardType="number-pad" style={{ width: 110, textAlign: 'center', fontSize: 22, fontWeight: '800' }} />
             <Txt s={13} c={C.mute} style={{ marginLeft: 12, flex: 1 }}>the courier can accept or counter, and you decide{errand ? '. The items are paid on top, at the approved price.' : ''}</Txt>
