@@ -181,19 +181,42 @@ export default function Admin() {
           </View>
         )}
 
-        {tab === 'drivers' && (
-          <View>
-            <Txt b s={16}>Drivers ({s.users.filter((u) => u.role === 'driver').length})</Txt>
-            <Txt s={11} c={C.mute} style={{ marginTop: 4 }}>Live points published by courier phones in the last 10 min (Supabase, refreshes every 10 s).</Txt>
-            {liveDrivers.length === 0 && <Txt s={11} c={C.mute} style={{ marginTop: 6 }}>No courier is sharing a location right now.</Txt>}
-            {liveDrivers.map((p) => (
-              <Card key={p.driver_phone} style={{ marginTop: 10 }}>
-                <Txt b s={13}>🚗 {p.driver_phone}</Txt>
-                <Txt s={11} c={C.mute}>{Number(p.lat).toFixed(4)}, {Number(p.lng).toFixed(4)} · {p.source === 'bg' ? 'background' : 'foreground'} · {new Date(p.updated_at).toLocaleTimeString()}</Txt>
-              </Card>
-            ))}
-          </View>
-        )}
+        {tab === 'drivers' && (() => {
+          // V25: show EVERY courier — approved AND pending KYC — with live
+          // location merged in. The old view listed only phones that shared
+          // a location in the last 10 min, so an offline driver was invisible
+          // even though the count above said "Drivers (1)".
+          const liveBy = {};
+          liveDrivers.forEach((p) => { liveBy[p.driver_phone] = p; });
+          const approved = s.users.filter((u) => u.driverStatus === 'approved');
+          const pending = s.kyc.filter((k) => k.role === 'driver' && k.status === 'pending'
+            && !approved.some((u) => u.phone === k.userId));
+          const all = [
+            ...approved.map((u) => ({ phone: u.phone, name: u.name, kyc: 'approved', frozen: u.frozen, online: !!liveBy[u.phone], point: liveBy[u.phone] })),
+            ...pending.map((k) => ({ phone: k.userId, name: k.name, kyc: 'pending', frozen: false, online: !!liveBy[k.userId], point: liveBy[k.userId] })),
+          ];
+          return (
+            <View>
+              <Txt b s={16}>Drivers ({all.length})</Txt>
+              <Txt s={11} c={C.mute} style={{ marginTop: 4 }}>Every registered courier — approved and pending — with live location when online (refreshes every 10 s).</Txt>
+              {all.length === 0 && <Txt c={C.mute} style={{ marginTop: 12 }}>No driver has registered yet. Drivers register from My Page → courier mode → submit documents.</Txt>}
+              {all.map((d) => (
+                <Card key={d.phone} style={{ marginTop: 10 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Txt b s={14}>🛵 {d.name || d.phone}</Txt>
+                    <View style={{ backgroundColor: d.online ? '#EAF3EF' : '#F2EFE3', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 }}>
+                      <Txt s={11} b c={d.online ? C.green : C.amber}>{d.online ? '🟢 Online now' : '⚪ Offline'}</Txt>
+                    </View>
+                  </View>
+                  <Txt s={11} c={C.mute}>{d.phone} · KYC {d.kyc}{d.frozen ? ' · 🔒 frozen' : ''}</Txt>
+                  {d.online && d.point
+                    ? <Txt s={11} c={C.mute}>📍 {Number(d.point.lat).toFixed(4)}, {Number(d.point.lng).toFixed(4)} · {d.point.source === 'bg' ? 'background' : 'foreground'} · {new Date(d.point.updated_at).toLocaleTimeString()}</Txt>
+                    : <Txt s={11} c={C.mute}>Driver must open the app and turn Online ON to receive offers.</Txt>}
+                </Card>
+              ))}
+            </View>
+          );
+        })()}
 
         {tab === 'settings' && form && (
           <View>

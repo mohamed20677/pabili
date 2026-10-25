@@ -427,7 +427,8 @@ export async function adminDecideKycCloud(k, ok, admin) {
 export async function fetchUsers() {
   const { data } = await supabase.from('profiles').select('phone,name,wallet_balance,is_frozen,driver_status,vendor_status,created_at').order('created_at', { ascending: false }).limit(100);
   return (data || []).map((u) => ({ id: u.phone, phone: u.phone, name: u.name || u.phone, wallet: Number(u.wallet_balance || 0), frozen: !!u.is_frozen,
-    role: u.driver_status === 'approved' ? 'driver' : u.vendor_status === 'approved' ? 'vendor' : 'customer', credit: 0 }));
+    role: u.driver_status === 'approved' ? 'driver' : u.vendor_status === 'approved' ? 'vendor' : 'customer', credit: 0,
+    driverStatus: u.driver_status, vendorStatus: u.vendor_status })); // V25: raw statuses for the admin Drivers tab
 }
 export async function adminFreezeCloud(phone, v, admin) {
   const { error } = await supabase.from('profiles').update({ is_frozen: v }).eq('phone', phone);
