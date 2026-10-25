@@ -403,9 +403,13 @@ export async function setDriverOnlineFlag(me, v) {
 }
 
 export async function dispatchTick(settings) {
-  const iso = nowIso();
+  // V34 LEGACY-DB FIX (the real reason drivers never saw offers): the beta DB's
+  // orders_status_check allowed ONLY finding_driver/picked_up/delivered/cancelled/
+  // completed, so writing status='driver_offer' violated the check and EVERY
+  // dispatch write failed silently. All pre-pickup stages now ride in
+  // status='finding_driver' + negotiation.ui; migration 8 drops the stale check.
   const { data: rows } = await supabase.from('orders').select('*')
-    .or(`status.eq.finding_driver,and(status.eq.driver_offer,offer_deadline.lt.${iso}),and(status.eq.driver_talk,offer_deadline.lt.${iso})`).limit(10);
+    .eq('status', 'finding_driver').limit(12);
   if (!rows || !rows.length) return 0;
   const cands = await onlineDrivers();
   const busy = await busyDrivers();
@@ -413,8 +417,8 @@ export async function dispatchTick(settings) {
   for (const r of rows) {
     // V21: only orders whose UI state is truly finding_driver are dispatched
     // (vendor-quote/negotiation/accepted orders are stored as finding_driver).
-    const rui = (r.negotiation && r.negotiation.ui) || r.status;
-    if (rui !== 'finding_driver' || r.driver_phone) {
+    const rui = (r.negotiation && r.negotiation.ui) || 'finding_driver';
+    if (r.driver_phone) continue; // accepted/ready_pickup ride as finding_driver + driver_phone
       // V31 ORDER SPEC — hard negotiation windows, enforced by dispatch:
       // 1) the store never answered the quote in time → the order cancels itself.
       // 2) the store never answered the customer's counter in time → the store's
@@ -426,22 +430,28 @@ export async function dispatchTick(settings) {
             .eq('id', r.id).eq('status', 'finding_driver').select();
           if (data && data.length) changed += 1;
         }
-      } else if (rui === 'vendor_talk') {
+        continue;
+      }
+      if (rui === 'vendor_talk') {
         const dl = ms(r.offer_deadline);
         if (dl && Date.now() > dl + 2000) {
           const hist = (r.negotiation && r.negotiation.history) || [];
           const lastV = [...hist].reverse().find((h) => h.by === 'vendor' || h.by === 'driver' || h.by === 'shopper');
           const keep = lastV ? lastV.amount : Number(r.price) || 0;
           const neg = { ...mkNeg('vendor', 'customer', keep, 'vendor', 'Time is up — the store price stands (final)', r.negotiation), ui: 'quote_review', final: true };
-          const { data } = await supabase.from('orders').update({ status: 'quote_review', awaiting: 'customer', price: keep, offer_deadline: null, negotiation: neg, updated_at: nowIso() })
+          // status stays finding_driver (legacy-safe) — quote_review rides in negotiation.ui
+          const { data } = await supabase.from('orders').update({ status: 'finding_driver', awaiting: 'customer', price: keep, offer_deadline: null, negotiation: neg, updated_at: nowIso() })
             .eq('id', r.id).eq('status', 'finding_driver').select();
           if (data && data.length) changed += 1;
         }
+        continue;
       }
-      continue;
-    }
+    // stage 2 settled: the customer is reviewing the final price — dispatch waits
+    if (rui === 'quote_review') continue;
+    // a LIVE (unexpired) driver offer keeps waiting until its deadline passes
+    if ((rui === 'driver_offer' || rui === 'driver_talk') && r.offer_to && ms(r.offer_deadline) > Date.now()) continue;
     const declined = new Set(r.declined || []);
-    const wasOffered = (r.status === 'driver_offer' || r.status === 'driver_talk') && r.offer_to;
+    const wasOffered = (rui === 'driver_offer' || rui === 'driver_talk') && r.offer_to;
     if (wasOffered) declined.add(r.offer_to); // an unanswered offer counts as a pass
     // V27 SELF-TEST DISPATCH: the old `c.phone !== r.customer_phone` excluded
     // the only online driver whenever the order came from the same phone
@@ -457,7 +467,7 @@ export async function dispatchTick(settings) {
     if (pool.length) {
       const pick = pool[0];
       busy.add(pick.phone);
-      patch = { status: 'driver_offer', awaiting: 'driver', offer_to: pick.phone, offer_deadline: plusSecs(settings.offerSecs || 30),
+      patch = { status: 'finding_driver', awaiting: 'driver', offer_to: pick.phone, offer_deadline: plusSecs(settings.offerSecs || 30),
         declined: [...declined], negotiation: { ...mkNeg('driver', 'driver', Number(r.fee), 'customer', 'Fee offer', null), ui: 'driver_offer' } };
     } else if (wasOffered) {
       patch = { status: 'finding_driver', offer_to: null, offer_deadline: null, awaiting: null, negotiation: { ui: 'finding_driver' }, declined: [...declined] };
@@ -495,7 +505,7 @@ const tableHint = (e, sqlFile) => {
   // say exactly which SQL file to run instead of a raw PostgREST code.
   const m = String((e && e.message) || e || '');
   return /PGRST205|Could not find the table/i.test(m)
-    ? 'This feature is not set up on the server yet — run galabili-sql/' + sqlFile + ' in the Supabase SQL editor first, then retry.'
+    ? 'This feature is not set up on the server yet — run galabili-sql/migration-8-order-system.sql in the Supabase SQL editor first, then retry.'
     : m;
 };
 export async function fetchIntercityAll(me) {
@@ -533,7 +543,7 @@ export async function placeIntercityCloud({ me, myName, fromCity, toCity, date, 
     }).select().single();
     if (error) throw error;
     return data;
-  } catch (e) { throw new Error(tableHint(e, 'setup-07-intercity.sql')); }
+  } catch (e) { throw new Error(tableHint(e, 'migration-8-order-system.sql')); }
 }
 export async function cancelIntercityCloud(t) {
   // Conditional update: only an OPEN request can be cancelled.
@@ -709,7 +719,7 @@ export async function placeHotelBookingCloud({ me, myName, hotel, guestType, nat
     }).select().single();
     if (error) throw error;
     return data;
-  } catch (e) { throw new Error(tableHint(e, 'setup-08-hotels.sql')); }
+  } catch (e) { throw new Error(tableHint(e, 'migration-8-order-system.sql')); }
 }
 export async function cancelHotelBookingCloud(b) {
   // Conditional update: only a PENDING booking can be cancelled by the guest.

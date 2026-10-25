@@ -101,6 +101,13 @@ create index if not exists hotel_bookings_guest_idx on public.hotel_bookings (gu
 -- [T5] orders — stage deadline column used by the dispatch time limits
 alter table public.orders add column if not exists offer_deadline timestamptz;
 
+-- [T6] LEGACY CHECK FIX (the real reason drivers never received offers):
+-- the beta DB's orders_status_check only allowed finding_driver / picked_up /
+-- delivered / cancelled / completed, so any write of driver_offer / driver_talk /
+-- quote_review FAILED. The stage machine (trigger [F] + negotiation.ui) is the
+-- source of truth now — the stale check goes.
+alter table public.orders drop constraint if exists orders_status_check;
+
 -- [F] SERVER-SIDE ORDER STAGE MACHINE (the agreed sequence, enforced in SQL):
 --   sent to store → store-quote negotiation (±10%, deadline) → final price +
 --   accept → driver stage (offer → negotiate → customer confirms) → driver
