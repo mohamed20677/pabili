@@ -1,4 +1,4 @@
-// Pabili PH — UI atoms (reference-matched)
+// Galabili PH — UI atoms (reference-matched)
 import React from 'react';
 import { Pressable, Text, TextInput, View, StyleSheet } from 'react-native';
 import { C } from './lib';

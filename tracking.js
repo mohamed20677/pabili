@@ -1,4 +1,4 @@
-// Pabili PH — driver live location. Foreground samples + REAL background tracking
+// Galabili PH — driver live location. Foreground samples + REAL background tracking
 // (Android foreground service via expo-task-manager + expo-location).
 // The task is defined at module scope and index.js imports this file before the app mounts,
 // so Android can start it headless even when the screen is locked or the app is swiped to background.
@@ -53,9 +53,9 @@ export async function startBgTracking(phone) {
         pausesUpdatesAutomatically: false,
         showsBackgroundLocationIndicator: true,
         foregroundService: {
-          notificationTitle: 'Pabili — you are online',
+          notificationTitle: 'Galabili — you are online',
           notificationBody: 'Sharing your live location for active deliveries.',
-          notificationColor: '#0E7C5B',
+          notificationColor: '#008A44',
         },
       });
     }

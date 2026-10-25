@@ -8,14 +8,16 @@ import { startBgTracking, stopBgTracking, publishLocation, heartbeat } from './t
 import { takeProofPhoto } from './media';
 import { Btn, Card, Field, Row, Section, Txt } from './ui';
 import { PhotoTimeline, photoBubble, Remaining, NegotiationBox } from './Customer';
+import IntercityBoard from './IntercityBoard';
 
 export default function Driver() {
-  const { s, driverPickup, driverDeliver, driverOfferAnswer, rideStep, driverCancel, shopperQuote, shopperRespond, toggleOnline, updateDriverLocation } = useStore();
+  const { s, driverPickup, driverDeliver, driverOfferAnswer, rideStep, driverCancel, shopperQuote, shopperRespond, toggleOnline, updateDriverLocation, sendIntercityOffer } = useStore();
   const [counter, setCounter] = useState({});
   const [price, setPrice] = useState({});
   const [shots, setShots] = useState({}); // errand: orderId -> uploaded item photo
   const [busy, setBusy] = useState(null);
   const [trk, setTrk] = useState({ state: 'idle' }); // idle | starting | bg | fg | denied
+  const [board, setBoard] = useState('jobs'); // jobs | intercity — V28: dedicated Intercity tab
   const phone = s.auth && s.auth.phone;
 
   // Online → background tracking (foreground service) + a foreground watcher; heartbeat keeps a parked courier "online".
@@ -58,6 +60,10 @@ export default function Driver() {
   const waiting = mine.filter((o) => o.status === 'driver_talk');
   const active = mine.filter((o) => o.driverPhone === phone && ['accepted', 'quote_review', 'vendor_talk', 'ready_pickup', 'picked_up', 'delivered'].includes(o.status));
   const completed = mine.filter((o) => o.driverPhone === phone && o.status === 'completed');
+  // V28 intercity: open trips visible to approved drivers; own trips always visible
+  const approvedDriver = ((s.roles && s.roles.driver && s.roles.driver.status) === 'approved');
+  const openIntercity = approvedDriver ? (s.intercity || []).filter((t) => t.status === 'open') : [];
+  const myIntercity = (s.intercity || []).filter((t) => (t.offers || []).some((o) => o.driverPhone === phone) || (t.bookedOffer && t.bookedOffer.driverPhone === phone));
   const earned = (s.wallet.tx || []).filter((t) => t.kind === 'delivery').reduce((a, t) => a + t.amount, 0);
   const pct = s.settings.commissions.driverPct;
   const me = (s.driverLocations || {})[phone || 'me'];
@@ -85,6 +91,15 @@ export default function Driver() {
         {trk.message ? <Txt s={10} c={C.mute} style={{ marginTop: 4 }}>{trk.message}</Txt> : null}
       </Section>
 
+      {/* V28: dedicated Intercity tab — open travel requests from passengers */}
+      <View style={{ flexDirection: 'row', marginTop: 4, marginBottom: 4 }}>
+        <Btn small kind={board === 'jobs' ? 'main' : 'ghost'} title="🚚 Jobs & offers" onPress={() => setBoard('jobs')} style={{ flex: 1, marginRight: 6 }} />
+        <Btn small kind={board === 'intercity' ? 'main' : 'ghost'} title={'🚌 Intercity' + (openIntercity.length ? ' (' + openIntercity.length + ')' : '')} onPress={() => setBoard('intercity')} style={{ flex: 1 }} />
+      </View>
+      {board === 'intercity' && (
+        <IntercityBoard open={openIntercity} mine={myIntercity} busy={busy} onSend={sendIntercityOffer} />
+      )}
+      {board === 'jobs' && (<>
       <Section title="📥 Incoming offers">
         {offers.length === 0 && <Txt s={12} c={C.mute}>{s.driverOnline ? 'Waiting for an offer near you…' : 'Go online first.'}</Txt>}
         {offers.map((o) => {
@@ -203,6 +218,7 @@ export default function Driver() {
         {completed.length === 0 && <Txt s={12} c={C.mute}>No completed trips yet.</Txt>}
         {completed.slice(0, 8).map((o) => <Card key={o.id} style={{ paddingVertical: 8, marginBottom: 6 }}><Txt s={12}>{o.kind === 'ride' ? '🚕 ' + o.dropoff : o.kind === 'errand' ? '🧭 ' + o.items : '🛵 ' + o.items} · {peso(o.fee)}</Txt></Card>)}
       </Section>
+      </>)}
       <View style={{ height: 100 }} />
     </ScrollView>
   );

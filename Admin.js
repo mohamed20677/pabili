@@ -7,6 +7,11 @@ import { useStore } from './store';
 import { Btn, Card, Field, Row, Section, Txt } from './ui';
 import { PhotoTimeline, photoBubble } from './Customer';
 
+const dateLabel = (iso) => {
+  try { return new Date(String(iso).slice(0, 10) + 'T00:00:00').toLocaleDateString('en-PH', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }); }
+  catch (e) { return iso; }
+};
+
 export default function Admin() {
   const st = useStore();
   const { s } = st;
@@ -23,6 +28,7 @@ export default function Admin() {
   const [rejectReason, setRejectReason] = useState({});
   const [adj, setAdj] = useState({});
   const [form, setForm] = useState(null);
+  const [hForm, setHForm] = useState({ name: '', city: '', address: '', roomType: 'Standard', price: '', rooms: '', photo: '', amenities: '' });
   React.useEffect(() => {
     if (tab !== 'settings') return;
     const x = s.settings; const r = x.ride || {};
@@ -36,6 +42,7 @@ export default function Admin() {
     ['orders', '📦 Orders'],
     ['users', '👥 Users'],
     ['stores', '🏪 Stores'],
+    ['hotels', '🏨 Hotels'],
     ['drivers', '🛵 Drivers'],
     ['settings', '⚙️'],
     ['audit', '📜 Log'],
@@ -44,7 +51,7 @@ export default function Admin() {
   return (
     <View style={{ flex: 1, backgroundColor: C.paper }}>
       <View style={{ backgroundColor: C.greenDk, padding: 16 }}>
-        <Txt b s={20} c="#fff">🛡 Pabili Admin</Txt>
+        <Txt b s={20} c="#fff">🛡 Galabili Admin</Txt>
         <Txt s={11} c="#fff" style={{ opacity: 0.8 }}>{s.auth?.phone} · full access</Txt>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 }}>
           {tabs.map(([k, l]) => (
@@ -180,6 +187,87 @@ export default function Admin() {
             ))}
           </View>
         )}
+
+        {tab === 'hotels' && (() => {
+          // V29: hotel-room booking for tourists and visitors. Admin confirms
+          // or rejects pending bookings, and manages the hotel listings shown
+          // on the customer's booking screen.
+          const pendingB = (s.hotelBookings || []).filter((b) => b.status === 'pending');
+          const decidedB = (s.hotelBookings || []).filter((b) => b.status !== 'pending');
+          return (
+            <View>
+              <Txt b s={16}>Hotel bookings ({pendingB.length} pending)</Txt>
+              <Txt s={11} c={C.mute} style={{ marginTop: 4 }}>Tourists and visitors request rooms here — Confirm to reserve, Reject with a reason.</Txt>
+              {pendingB.length === 0 && <Txt c={C.mute} style={{ marginTop: 12 }}>No pending bookings.</Txt>}
+              {pendingB.map((b) => (
+                <Card key={b.id} style={{ marginTop: 10 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Txt b s={14}>🏨 {b.hotelName}</Txt>
+                    <View style={{ backgroundColor: '#FBF7EC', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 }}>
+                      <Txt s={11} b c={C.amber}>⏳ pending</Txt>
+                    </View>
+                  </View>
+                  <Txt s={11} c={C.mute}>{dateLabel(b.checkIn)} → {dateLabel(b.checkOut)} · {b.nights} night(s) · {b.guests} guest(s) · {b.rooms} room(s) · {b.roomType}</Txt>
+                  <Txt s={11} c={C.mute}>{b.guestName} · {b.guestPhone} · {b.guestType}{b.nationality ? ' · ' + b.nationality : ''}{b.contact ? ' · ☎ ' + b.contact : ''}</Txt>
+                  {b.note ? <Txt s={11} c={C.mute}>📝 {b.note}</Txt> : null}
+                  <Txt b s={14} c={C.green} style={{ marginTop: 4 }}>{peso(b.total)} total</Txt>
+                  <Field value={rejectReason[b.id] || ''} onChangeText={(v) => setRejectReason({ ...rejectReason, [b.id]: v })}
+                         placeholder="Reject reason (optional)" style={{ marginTop: 8 }} />
+                  <View style={{ flexDirection: 'row', marginTop: 8 }}>
+                    <Btn small title="✓ Confirm booking" onPress={() => st.adminDecideHotelBooking(b, true)} style={{ flex: 1, marginRight: 6 }} />
+                    <Btn small kind="bad" title="Reject" onPress={() => st.adminDecideHotelBooking(b, false, rejectReason[b.id] || 'admin')} style={{ flex: 1 }} />
+                  </View>
+                </Card>
+              ))}
+
+              <Section title={'🏨 Hotel listings (' + (s.hotels || []).length + ')'}>
+                <Card>
+                  <Txt b s={13}>＋ Add a hotel</Txt>
+                  <Field value={hForm.name} onChangeText={(v) => setHForm({ ...hForm, name: v })} placeholder="Hotel name" style={{ marginTop: 6 }} />
+                  <View style={{ flexDirection: 'row' }}>
+                    <View style={{ flex: 1, marginRight: 6 }}><Field value={hForm.city} onChangeText={(v) => setHForm({ ...hForm, city: v })} placeholder="City" /></View>
+                    <View style={{ flex: 1 }}><Field value={hForm.address} onChangeText={(v) => setHForm({ ...hForm, address: v })} placeholder="Address (optional)" /></View>
+                  </View>
+                  <View style={{ flexDirection: 'row' }}>
+                    <View style={{ flex: 1, marginRight: 6 }}><Field value={hForm.roomType} onChangeText={(v) => setHForm({ ...hForm, roomType: v })} placeholder="Room type (Standard/Double/Suite/Family)" /></View>
+                    <View style={{ flex: 1 }}><Field value={hForm.price} onChangeText={(v) => setHForm({ ...hForm, price: v.replace(/[^0-9.]/g, '') })} keyboardType="decimal-pad" placeholder="₱ per night" /></View>
+                  </View>
+                  <View style={{ flexDirection: 'row' }}>
+                    <View style={{ flex: 1, marginRight: 6 }}><Field value={hForm.rooms} onChangeText={(v) => setHForm({ ...hForm, rooms: v.replace(/[^0-9]/g, '') })} keyboardType="number-pad" placeholder="Rooms available" /></View>
+                    <View style={{ flex: 1 }}><Field value={hForm.photo} onChangeText={(v) => setHForm({ ...hForm, photo: v })} placeholder="Photo URL (optional)" /></View>
+                  </View>
+                  <Field value={hForm.amenities} onChangeText={(v) => setHForm({ ...hForm, amenities: v })} placeholder="Amenities (wifi, breakfast, pool…)" />
+                  <Btn small title="＋ Add hotel listing" disabled={!hForm.name.trim() || !hForm.city.trim() || !hForm.price}
+                       onPress={() => { st.adminAddHotel({ ...hForm, price: Number(hForm.price) || 0, roomsAvailable: Number(hForm.rooms) || 1 }); setHForm({ name: '', city: '', address: '', roomType: 'Standard', price: '', rooms: '', photo: '', amenities: '' }); }} style={{ marginTop: 8 }} />
+                </Card>
+                {(s.hotels || []).map((h) => (
+                  <Card key={h.id} style={{ marginTop: 10 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                      <Txt b s={14}>🏨 {h.name} {h.active ? '' : '⏸'}</Txt>
+                      <Txt b s={13} c={C.green}>{peso(h.price)}/night</Txt>
+                    </View>
+                    <Txt s={11} c={C.mute}>{h.city}{h.address ? ' · ' + h.address : ''} · {h.roomType} · {h.roomsAvailable} room(s){h.amenities ? ' · ' + h.amenities : ''}</Txt>
+                    <Btn small kind={h.active ? 'bad' : 'main'} title={h.active ? 'Pause' : 'Activate'} onPress={() => st.adminToggleHotelActive(h)} style={{ marginTop: 6 }} />
+                  </Card>
+                ))}
+              </Section>
+
+              {decidedB.length > 0 && (
+                <Section title={'🗂 Decided bookings (' + decidedB.length + ')'}>
+                  {decidedB.map((b) => (
+                    <Card key={b.id} style={{ marginTop: 8, opacity: 0.75 }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                        <Txt b s={13}>🏨 {b.hotelName}</Txt>
+                        <Txt s={11} b c={b.status === 'confirmed' ? C.green : C.bad}>{b.status}</Txt>
+                      </View>
+                      <Txt s={11} c={C.mute}>{b.guestName} · {b.guestPhone} · {dateLabel(b.checkIn)} → {dateLabel(b.checkOut)} · {peso(b.total)}</Txt>
+                    </Card>
+                  ))}
+                </Section>
+              )}
+            </View>
+          );
+        })()}
 
         {tab === 'drivers' && (() => {
           // V25: show EVERY courier — approved AND pending KYC — with live

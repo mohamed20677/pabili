@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "Pabili",
+    "name": "Galabili",
     "slug": "pabili-ph",
-    "version": "1.5.0",
+    "version": "1.10.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "platforms": [
@@ -11,16 +11,16 @@
     "icon": "./assets/icon.png",
     "notification": {
       "icon": "./assets/notification-icon.png",
-      "color": "#0E7C5B"
+      "color": "#059453"
     },
     "splash": {
       "image": "./assets/splash.png",
-      "backgroundColor": "#0E7C5B",
+      "backgroundColor": "#059453",
       "resizeMode": "contain"
     },
     "android": {
       "package": "com.pabili.ph",
-      "versionCode": 24,
+      "versionCode": 27,
       "permissions": [
         "INTERNET",
         "ACCESS_FINE_LOCATION",
@@ -33,7 +33,7 @@
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#0E7C5B"
+        "backgroundColor": "#059453"
       }
     },
     "plugins": [
@@ -41,7 +41,7 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Pabili uses your location to match nearby stores and, while you are online as a courier, to share your live position for active deliveries \u2014 even when the screen is locked.",
+          "locationAlwaysAndWhenInUsePermission": "Galabili uses your location to match nearby stores and, while you are online as a courier, to share your live position for active deliveries \u2014 even when the screen is locked.",
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true
         }
@@ -49,8 +49,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Pabili needs your photos to attach pictures to orders and your profile.",
-          "cameraPermission": "Pabili needs the camera to take product, pickup and delivery photos."
+          "photosPermission": "Galabili needs your photos to attach pictures to orders and your profile.",
+          "cameraPermission": "Galabili needs the camera to take product, pickup and delivery photos."
         }
       ]
     ]

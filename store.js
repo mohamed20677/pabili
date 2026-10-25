@@ -1,4 +1,4 @@
-// Pabili PH — V17 store. Orders, rides, stores, approvals and wallet now live in Supabase and are
+// Galabili PH — V17 store. Orders, rides, stores, approvals and wallet now live in Supabase and are
 // shared between phones (polled every 4 s + realtime hint). Local state keeps only what is personal
 // to this phone: session, language, saved addresses, cart draft, coupons, vendor catalog.
 // The old bot/timer simulator was removed on purpose — nothing in here is simulated any more.
@@ -18,12 +18,12 @@ const DEFAULTS = () => ({
   auth: null, terms: false,
   roles: { driver: { status: 'none', data: null }, vendor: { status: 'none', data: null } },
   activeRole: 'customer',
-  profile: { name: 'Pabili User', rating: 5.0, coupons: [], avatar: null },
+  profile: { name: 'Galabili User', rating: 5.0, coupons: [], avatar: null },
   addresses: [],
   wallet: { balance: 0, credit: 0, tx: [], withdrawals: [] },
   cart: { items: [], shipping_fee: 25 },
   catalog: [],
-  orders: [], alerts: [], audit: [], users: [], stores: [], kyc: [], myStore: null, frozen: false, net: 'ok',
+  orders: [], alerts: [], audit: [], users: [], stores: [], kyc: [], intercity: [], hotels: [], hotelBookings: [], myStore: null, frozen: false, net: 'ok',
   driverLocations: {}, driverOnline: false,
   settings: {
     commissions: { customerPct: 3, vendorPct: 8, driverPct: 10 },
@@ -122,7 +122,7 @@ export function StoreProvider({ children }) {
     if (n % 10 === 0) { const st = await C.fetchSettings(); settings = { ...cur.settings, ...st, ride: { ...cur.settings.ride, ...(st.ride || {}) } }; patch.settings = settings; }
     if (admin) {
       patch.orders = await C.fetchAllOrders(me);
-      if (n % 2 === 0) { patch.kyc = await C.fetchKycAll(); patch.stores = await C.fetchStores(); patch.users = await C.fetchUsers(); patch.audit = await C.fetchAudit(); }
+      if (n % 2 === 0) { patch.kyc = await C.fetchKycAll(); patch.stores = await C.fetchStores(); patch.users = await C.fetchUsers(); patch.audit = await C.fetchAudit(); patch.intercity = await C.fetchIntercityAll(me); try { patch.hotels = await C.fetchHotels(); patch.hotelBookings = await C.fetchHotelBookingsAll(me); } catch (e) { /* hotels table not set up yet */ } }
     } else {
       patch.orders = await C.fetchMyOrders(me);
       if (n % 3 === 0) {
@@ -133,6 +133,7 @@ export function StoreProvider({ children }) {
           patch.roles = { driver: { status: p.driver_status || 'none', data: null }, vendor: { status: p.vendor_status || 'none', data: null } };
           patch.frozen = !!p.is_frozen; patch.myVehicle = C.vehicleLabel(p);
         }
+        try { patch.hotels = await C.fetchHotels(); patch.hotelBookings = await C.fetchHotelBookingsAll(me); } catch (e) { /* hotels table not set up yet */ }
       }
       const searching = patch.orders.some((o) => o.mine && C.SEARCHING.includes(o.status));
       if ((cur.driverOnline || searching) && (await C.dispatchTick(settings)) > 0) patch.orders = await C.fetchMyOrders(me);
@@ -161,7 +162,7 @@ export function StoreProvider({ children }) {
       if ((next.activeRole === 'driver' && r.driver.status !== 'approved') || (next.activeRole === 'vendor' && r.vendor.status !== 'approved')) next.activeRole = 'customer';
       return next;
     });
-    newAlerts.slice(0, 3).forEach((a) => notify('Pabili', a.text));
+    newAlerts.slice(0, 3).forEach((a) => notify('Galabili', a.text));
   }
   async function refresh(force) {
     if (busyRef.current) { if (force) againRef.current = true; return; }
@@ -261,6 +262,41 @@ export function StoreProvider({ children }) {
     listDriverLocations: () => (sRef.current ? (sRef.current.driverLocations || {}) : {}),
     catalogAdd: (name, price) => setS((c) => ({ ...c, catalog: [...(c.catalog || []), { id: uid(), name, price }] })),
     catalogDel: (id) => setS((c) => ({ ...c, catalog: (c.catalog || []).filter((x) => x.id !== id) })),
+
+    // ---- intercity travel (V28) ----
+    placeIntercity: (d) => run('Trip request', async () => {
+      guardFrozen();
+      const cur = sRef.current;
+      if (!d.fromCity || !d.toCity) throw new Error('Choose the from and to cities.');
+      return C.placeIntercityCloud({ me: me(), myName: cur.profile.name, ...d });
+    }),
+    cancelIntercity: (t0) => run('Cancel', () => C.cancelIntercityCloud(typeof t0 === 'string' ? sRef.current.intercity.find((x) => x.id === t0) : t0)),
+    sendIntercityOffer: (t0, price, message) => run('Offer', async () => {
+      const t = typeof t0 === 'string' ? sRef.current.intercity.find((x) => x.id === t0) : t0;
+      if (!t || t.status !== 'open') throw new Error('This trip is no longer open.');
+      const cur = sRef.current;
+      return C.sendIntercityOfferCloud(t, me(), cur.profile.name, price, message);
+    }),
+    acceptIntercityOffer: (t0, of) => run('Book driver', async () => {
+      const t = typeof t0 === 'string' ? sRef.current.intercity.find((x) => x.id === t0) : t0;
+      return C.acceptIntercityOfferCloud(t, of);
+    }),
+
+    // ---- hotel rooms (V29) ----
+    bookHotel: (d) => run('Hotel booking', async () => {
+      guardFrozen();
+      const cur = sRef.current;
+      return C.placeHotelBookingCloud({ me: me(), myName: cur.profile.name, ...d });
+    }),
+    cancelHotelBooking: (b0) => run('Cancel', () => C.cancelHotelBookingCloud(typeof b0 === 'string' ? (sRef.current.hotelBookings || []).find((x) => x.id === b0) : b0)),
+    adminAddHotel: (h) => run('Add hotel', () => C.addHotelCloud(h)),
+    adminToggleHotelActive: (h) => run('Update hotel', () => C.toggleHotelActiveCloud(h)),
+    adminDecideHotelBooking: (b0, ok, reason) => run('Booking decision', async () => {
+      const b = typeof b0 === 'string' ? (sRef.current.hotelBookings || []).find((x) => x.id === b0) : b0;
+      const r = await C.decideHotelBookingCloud(b, ok, me());
+      try { C.auditCloud(ok ? 'hotel_confirm' : 'hotel_reject', (b.hotelName || b.hotelId) + ' · ' + (b.guestPhone || '') + (reason ? ' · ' + reason : ''), b.id, me()); } catch (e) { /* ignore */ }
+      return r;
+    }),
 
     // ---- customer: orders and rides ----
     placeOrder: (d) => run('Order', async () => {

@@ -1,4 +1,4 @@
-// Pabili PH — passenger ride request (V17). No photos: pickup, destination, an opening fare, then the
+// Galabili PH — passenger ride request (V17). No photos: pickup, destination, an opening fare, then the
 // same offer → counter → accept negotiation as store orders, with nearby drivers offered one by one.
 import React, { useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';

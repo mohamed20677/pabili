@@ -1,4 +1,4 @@
-// Pabili PH — cloud data layer (V17). Real multi-phone orders + rides on Supabase.
+// Galabili PH — cloud data layer (V17). Real multi-phone orders + rides on Supabase.
 // Every status change is a CONDITIONAL update (status must still be what we expect), so two phones
 // pressing buttons at the same moment can never corrupt an order: the loser gets a clear message.
 import { supabase, SUPA_URL, SUPA_ANON } from './supabase';
@@ -415,6 +415,91 @@ export async function dispatchTick(settings) {
   return changed;
 }
 
+// ---------------------------------------------------------------- intercity travel (V28)
+// A passenger posts a from-city → to-city trip; registered drivers see it in a
+// dedicated Driver-board tab and send their own offers (price + message). The
+// customer picks one offer → contact opens (phone/WhatsApp) → other offers are
+// declined automatically.
+export function mapIntercity(r, me) {
+  return {
+    id: r.id, mine: r.customer_phone === me,
+    fromCity: r.from_city, toCity: r.to_city, date: r.travel_date,
+    passengers: Number(r.passengers || 1), note: r.note || '',
+    customerName: r.customer_name || r.customer_phone,
+    status: r.status || 'open', bookedOfferId: r.booked_offer_id,
+    created: ms(r.created_at),
+  };
+}
+export async function fetchIntercityAll(me) {
+  const { data: reqs, error } = await supabase.from('intercity_requests')
+    .select('*').order('created_at', { ascending: false }).limit(60);
+  if (error) throw error;
+  const ids = (reqs || []).map((r) => r.id);
+  let offers = [];
+  if (ids.length) {
+    const { data: ofs } = await supabase.from('intercity_offers').select('*').in('request_id', ids).order('price', { ascending: true });
+    offers = ofs || [];
+  }
+  return (reqs || []).map((r) => {
+    const t = mapIntercity(r, me);
+    t.offers = offers.filter((o) => o.request_id === r.id).map((o) => ({
+      id: o.id, driverPhone: o.driver_phone, driverName: o.driver_name, price: Number(o.price),
+      message: o.message || '', status: o.status || 'sent', ts: ms(o.created_at),
+    }));
+    t.bookedOffer = (t.offers.find((o) => o.id === t.bookedOfferId)) || null;
+    return t;
+  });
+}
+export async function placeIntercityCloud({ me, myName, fromCity, toCity, date, passengers, note }) {
+  const uid = await ensureUid(me, myName);
+  const { data, error } = await supabase.from('intercity_requests').insert({
+    customer_id: uid, customer_phone: me, customer_name: myName,
+    from_city: fromCity, to_city: toCity, travel_date: date,
+    passengers: passengers || 1, note: note || null, status: 'open',
+  }).select().single();
+  if (error) throw error;
+  return data;
+}
+export async function cancelIntercityCloud(t) {
+  // Conditional update: only an OPEN request can be cancelled.
+  const { data, error } = await supabase.from('intercity_requests')
+    .update({ status: 'cancelled', updated_at: nowIso() }).eq('id', t.id).eq('status', 'open').select();
+  if (error) throw error;
+  if (!data || !data.length) throw new Error('This trip was just updated by someone else. Refreshed — please check.');
+  return data[0];
+}
+export async function sendIntercityOfferCloud(t, me, driverName, price, message) {
+  // One driver, one open offer per request: an earlier sent offer is replaced.
+  const prev = await supabase.from('intercity_offers').select('id')
+    .eq('request_id', t.id).eq('driver_phone', me).eq('status', 'sent').maybeSingle();
+  if (prev && prev.data && prev.data.id) {
+    const { error } = await supabase.from('intercity_offers')
+      .update({ price, message: message || null, created_at: nowIso() }).eq('id', prev.data.id);
+    if (error) throw error;
+    return { replaced: true };
+  }
+  const { error } = await supabase.from('intercity_offers').insert({
+    request_id: t.id, driver_phone: me, driver_name: driverName, price, message: message || null, status: 'sent',
+  });
+  if (error) throw error;
+  return { replaced: false };
+}
+export async function acceptIntercityOfferCloud(t, of) {
+  // Accept ONE offer: mark it accepted, decline all the others, book the trip.
+  const { data, error } = await supabase.from('intercity_offers')
+    .update({ status: 'accepted' }).eq('id', of.id).eq('status', 'sent').select();
+  if (error) throw error;
+  if (!data || !data.length) throw new Error('This offer was just taken or cancelled. Refreshed — please check.');
+  await supabase.from('intercity_offers').update({ status: 'declined' })
+    .eq('request_id', t.id).neq('id', of.id).eq('status', 'sent');
+  const r = await supabase.from('intercity_requests')
+    .update({ status: 'booked', booked_offer_id: of.id, updated_at: nowIso() })
+    .eq('id', t.id).eq('status', 'open').select();
+  if (r.error) throw r.error;
+  if (!r.data || !r.data.length) throw new Error('This trip is no longer open. Refreshed — please check.');
+  return r.data[0];
+}
+
 // ---------------------------------------------------------------- stores, roles, KYC
 export async function setStoreOpen(me, open) {
   const { error } = await supabase.from('stores').update({ open }).eq('owner_phone', me);
@@ -490,4 +575,94 @@ export async function fetchAudit() {
 export async function broadcastCloud(text, target, by) {
   const { error } = await supabase.from('broadcast_alerts').insert({ text, target: target || 'all', sent_by: by });
   if (error) throw error;
+}
+
+// ---------------------------------------------------------------- hotel rooms (V29)
+// A tourist or visitor picks an ACTIVE hotel listing and sends a booking request
+// (check-in/out, guests, rooms, nationality, contact). The ADMIN confirms or
+// rejects it from the Admin → Hotels tab; the guest tracks the status and can
+// cancel while pending. A confirmed booking reveals the contact for call/WhatsApp.
+export function mapHotel(h) {
+  return {
+    id: h.id, name: h.name, city: h.city, address: h.address || '',
+    roomType: h.room_type || 'Standard', price: Number(h.price_per_night || 0),
+    roomsAvailable: Number(h.rooms_available || 1), photo: h.photo_url || null,
+    amenities: h.amenities || '', active: h.active !== false,
+  };
+}
+export async function fetchHotels() {
+  const { data, error } = await supabase.from('hotels').select('*').order('created_at', { ascending: false }).limit(60);
+  if (error) throw error;
+  return (data || []).map(mapHotel);
+}
+export function mapHotelBooking(b) {
+  return {
+    id: b.id, hotelId: b.hotel_id,
+    guestPhone: b.guest_phone, guestName: b.guest_name || b.guest_phone,
+    guestType: b.guest_type || 'tourist', nationality: b.nationality || '',
+    checkIn: b.check_in, checkOut: b.check_out,
+    guests: Number(b.guests || 1), rooms: Number(b.rooms || 1), nights: Number(b.nights || 1),
+    roomType: b.room_type || 'Standard', total: Number(b.total_price || 0),
+    contact: b.contact || '', note: b.note || '',
+    status: b.status || 'pending', decidedBy: b.decided_by || null,
+  };
+}
+export async function fetchHotelBookingsAll(me) {
+  const { data: books, error } = await supabase.from('hotel_bookings')
+    .select('*').order('created_at', { ascending: false }).limit(60);
+  if (error) throw error;
+  const { data: hs } = await supabase.from('hotels').select('id,name');
+  const nameOf = {};
+  (hs || []).forEach((h) => { nameOf[h.id] = h.name; });
+  return (books || []).map((b) => ({ ...mapHotelBooking(b), hotelName: nameOf[b.hotel_id] || 'Hotel', mine: b.guest_phone === me }));
+}
+export async function placeHotelBookingCloud({ me, myName, hotel, guestType, nationality, checkIn, checkOut, guests, rooms, contact, note }) {
+  if (!hotel || !hotel.id) throw new Error('Choose a hotel first.');
+  if (!contact || !String(contact).trim()) throw new Error('Add a contact number so the hotel can reach you.');
+  const today = new Date().toISOString().slice(0, 10);
+  if (String(checkIn) < today) throw new Error('Check-in cannot be in the past.');
+  const nights = Math.round((new Date(checkOut + 'T00:00:00Z') - new Date(checkIn + 'T00:00:00Z')) / 86400000);
+  if (!Number.isFinite(nights) || nights < 1) throw new Error('Check-out must be after check-in.');
+  const uid = await ensureUid(me, myName);
+  const total = Number(hotel.price || 0) * nights * Math.max(1, rooms || 1);
+  const { data, error } = await supabase.from('hotel_bookings').insert({
+    hotel_id: hotel.id, guest_id: uid, guest_phone: me, guest_name: myName,
+    guest_type: guestType || 'tourist', nationality: nationality || null,
+    check_in: checkIn, check_out: checkOut, guests: guests || 1, rooms: rooms || 1,
+    nights, total_price: total, contact: contact || null, note: note || null, status: 'pending',
+  }).select().single();
+  if (error) throw error;
+  return data;
+}
+export async function cancelHotelBookingCloud(b) {
+  // Conditional update: only a PENDING booking can be cancelled by the guest.
+  const { data, error } = await supabase.from('hotel_bookings')
+    .update({ status: 'cancelled', updated_at: nowIso() }).eq('id', b.id).eq('status', 'pending').select();
+  if (error) throw error;
+  if (!data || !data.length) throw new Error('This booking was just updated by the hotel. Refreshed — please check.');
+  return data[0];
+}
+export async function decideHotelBookingCloud(b, ok, by) {
+  // Admin decision: only a PENDING booking can be confirmed or rejected.
+  const { data, error } = await supabase.from('hotel_bookings')
+    .update({ status: ok ? 'confirmed' : 'rejected', decided_by: by || 'admin', decided_at: nowIso(), updated_at: nowIso() })
+    .eq('id', b.id).eq('status', 'pending').select();
+  if (error) throw error;
+  if (!data || !data.length) throw new Error('This booking was just decided. Refreshed — please check.');
+  return data[0];
+}
+export async function addHotelCloud(h) {
+  const { data, error } = await supabase.from('hotels').insert({
+    name: h.name, city: h.city, address: h.address || null, room_type: h.roomType || 'Standard',
+    price_per_night: Number(h.price) || 0, rooms_available: Number(h.roomsAvailable) || 1,
+    photo_url: h.photo || null, amenities: h.amenities || null, active: true,
+  }).select().single();
+  if (error) throw error;
+  return data;
+}
+export async function toggleHotelActiveCloud(h) {
+  const { data, error } = await supabase.from('hotels').update({ active: !h.active, updated_at: nowIso() }).eq('id', h.id).select();
+  if (error) throw error;
+  if (!data || !data.length) throw new Error('Hotel not found.');
+  return data[0];
 }

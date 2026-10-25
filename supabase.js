@@ -1,4 +1,4 @@
-// Pabili PH — Supabase adapter (live when .env has SUPABASE_URL + SUPABASE_ANON_KEY; falls back silently otherwise).
+// Galabili PH — Supabase adapter (live when .env has SUPABASE_URL + SUPABASE_ANON_KEY; falls back silently otherwise).
 // Created with the approved spec from the team. No fake keys: read from expo-constants / .env; if missing → null.
 import Constants from 'expo-constants';
 // react-native-get-random-values polyfill is loaded in index.js BEFORE this module.
@@ -54,7 +54,7 @@ export async function wireSupabaseSession() {
 // ---------- Schema bootstrap (idempotent — runs via SQL editor or migrations) ----------
 // Run once in Supabase SQL editor: supabase/schema.sql
 export const SCHEMA_SQL = `
--- Pabili PH — Schema (V10). Idempotent on a FRESH database AND on a drifted one
+-- Galabili PH — Schema (V10). Idempotent on a FRESH database AND on a drifted one
 -- (old-version tables already present). Fixes 42703 "column ts does not exist":
 -- create table if not exists silently skipped old tables, then indexes/policies
 -- referencing ts failed. Every column is now ensured via

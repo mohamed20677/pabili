@@ -1,4 +1,4 @@
-// Pabili PH — Auth screens: Login (green hero), OTP (4 boxes + timer), Terms consent.
+// Galabili PH — Auth screens: Login (green hero), OTP (4 boxes + timer), Terms consent.
 // Matches the reference screenshots exactly (same layout/colors), localized en/tl.
 import React, { useEffect, useRef, useState } from 'react';
 import { Alert, Image, Pressable, View } from 'react-native';
@@ -23,17 +23,17 @@ export function PhoneScreen({ onDone }) {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#0E7C5B' }}>
+    <View style={{ flex: 1, backgroundColor: '#008A44' }}>
       {/* hero ~65% */}
       <View style={{ flex: 1.8, alignItems: 'center', justifyContent: 'center' }}>
         <View style={{ position: 'absolute', top: 14, left: 14, width: 30, height: 30, borderRadius: 15,
                        backgroundColor: 'rgba(255,255,255,0.9)', alignItems: 'center', justifyContent: 'center' }}>
-          <Txt b c="#0E7C5B" s={16}>?</Txt>
+          <Txt b c="#008A44" s={16}>?</Txt>
         </View>
         {/* brand mark: approved logo lockup on white card (brand sheet 2026-10-19) */}
         <View style={{ alignItems: 'center' }}>
           <View style={{ backgroundColor: '#fff', borderRadius: 26, paddingVertical: 12, paddingHorizontal: 20 }}>
-            <Image source={require('./assets/logo-lockup.png')} style={{ width: 216, height: 144 }} resizeMode="contain" />
+            <Image source={require('./assets/logo-lockup.png')} style={{ width: 168, height: 168 }} resizeMode="contain" />
           </View>
           <Txt c="#fff" s={13} style={{ opacity: 0.92, marginTop: 12 }}>Any item, any store, any time.</Txt>
         </View>
@@ -49,7 +49,7 @@ export function PhoneScreen({ onDone }) {
                  style={{ flex: 1, borderWidth: 0, marginLeft: 8, backgroundColor: 'transparent' }} />
         </View>
         <Btn title={T('sendCode')} onPress={send} busy={busy} />
-        <Txt c="#0E7C5B" s={13} style={{ textAlign: 'center', marginTop: 14 }}>{T('social')}</Txt>
+        <Txt c="#008A44" s={13} style={{ textAlign: 'center', marginTop: 14 }}>{T('social')}</Txt>
         <Txt c="#6B7A72" s={11} style={{ textAlign: 'center', marginTop: 16 }}>{T('termsNote')}</Txt>
         <Txt c="#B9C4BE" s={10} style={{ textAlign: 'center', marginTop: 6 }}>{T('testHint')}</Txt>
       </View>
@@ -94,18 +94,18 @@ export function OtpScreen({ digits, onVerified, onBack }) {
       <Pressable onPress={onBack} style={{ alignSelf: 'flex-end', padding: 6 }}><Txt s={22} c="#17231E">›</Txt></Pressable>
       <Txt b s={22} style={{ textAlign: 'center', marginTop: 30 }}>{T('otpTitle')}</Txt>
       <Txt c="#6B7A72" s={13} style={{ textAlign: 'center', marginTop: 8 }}>
-        {T('otpSub')} <Txt b c="#0E7C5B">+63{digits}</Txt>
+        {T('otpSub')} <Txt b c="#008A44">+63{digits}</Txt>
       </Txt>
       <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 28 }}>
         {code.map((v, i) => (
           <Field key={i} ref={refs[i]} value={v} onChangeText={(t) => put(i, t)} keyboardType="number-pad"
                  maxLength={1} style={{ width: 56, height: 60, marginHorizontal: 6, textAlign: 'center',
-                 fontSize: 24, fontWeight: '800', borderColor: v !== '' ? '#0E7C5B' : '#DCE5DF', borderWidth: 1.5 }} />
+                 fontSize: 24, fontWeight: '800', borderColor: v !== '' ? '#008A44' : '#DCE5DF', borderWidth: 1.5 }} />
         ))}
       </View>
       <Txt c="#6B7A72" s={13} style={{ textAlign: 'center', marginTop: 26 }}>
         {secs > 0 ? `${T('resendIn')} 0${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`
-                  : <Txt c="#0E7C5B" b onPress={() => setSecs(90)}>{T('resend')}</Txt>}
+                  : <Txt c="#008A44" b onPress={() => setSecs(90)}>{T('resend')}</Txt>}
       </Txt>
       <Btn title={T('verify')} onPress={verify} disabled={code.join('').length < 4} />
       <Txt c="#B9C4BE" s={11} style={{ textAlign: 'center', marginTop: 60 }}>{T('safeNote')}</Txt>
@@ -122,7 +122,7 @@ export function TermsScreen({ onAgree }) {
     <Pressable onPress={() => (label === T('tC1') ? setC1(!c1) : setC2(!c2))}
       style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
       <View style={{ width: 22, height: 22, borderRadius: 6, borderWidth: 1.5, marginRight: 12,
-                     borderColor: '#0E7C5B', backgroundColor: on ? '#0E7C5B' : '#fff',
+                     borderColor: '#008A44', backgroundColor: on ? '#008A44' : '#fff',
                      alignItems: 'center', justifyContent: 'center' }}>
         {on && <Txt c="#fff" b s={13}>✓</Txt>}
       </View>

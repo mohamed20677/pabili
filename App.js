@@ -1,4 +1,4 @@
-// Pabili PH — full app shell: auth flow → role-based experience
+// Galabili PH — full app shell: auth flow → role-based experience
 // V8: Store picker step (after tapping a category chip) → StoresByCategory list →
 // tapping a store routes into OrderForm with that store pre-selected.
 import React, { useState } from 'react';
@@ -19,6 +19,8 @@ import Vendor from './Vendor';
 import Admin from './Admin';
 import BottomNav from './BottomNav';
 import RideForm from './Ride';
+import IntercityForm from './Intercity';
+import HotelsScreen from './HotelsScreen';
 import { Txt } from './ui';
 
 function Shell() {
@@ -33,6 +35,8 @@ function Shell() {
   const [cartOpen, setCartOpen] = useState(false);
   const [addrOpen, setAddrOpen] = useState(false);
   const [rideOpen, setRideOpen] = useState(false);
+  const [intercityOpen, setIntercityOpen] = useState(false);
+  const [hotelOpen, setHotelOpen] = useState(false);
 
   // V16: make sure the cloud profile row exists, then restore name + photo (e.g. after a reinstall)
   React.useEffect(() => {
@@ -65,7 +69,7 @@ function Shell() {
     ? (role === 'driver' ? <Driver /> : role === 'vendor' ? <Vendor />
        : <HomeScreen
            goNew={(c) => { setPreselect(c); setPreselectStore(null); setNewOpen(true); }}
-           goStores={(c) => { setStoresCat(c); }} goCart={() => setCartOpen(true)} goRide={() => setRideOpen(true)} />)
+           goStores={(c) => { setStoresCat(c); }} goCart={() => setCartOpen(true)} goRide={() => setRideOpen(true)} goIntercity={() => setIntercityOpen(true)} goHotels={() => setHotelOpen(true)} />)
     : tab === 'orders' ? <OrdersTab />
     : tab === 'alerts' ? <AlertsTab />
     : <Profile onOpenAddresses={() => setAddrOpen(true)} />;
@@ -94,6 +98,16 @@ function Shell() {
           <RideForm onClose={() => setRideOpen(false)} onPlaced={() => setTab('orders')} />
         </SafeAreaView>
       </Modal>
+      <Modal visible={intercityOpen} animationType="slide" onRequestClose={() => setIntercityOpen(false)}>
+        <SafeAreaView style={{ flex: 1 }}>
+          <IntercityForm onClose={() => setIntercityOpen(false)} onPlaced={() => setTab('orders')} />
+        </SafeAreaView>
+      </Modal>
+      <Modal visible={hotelOpen} animationType="slide" onRequestClose={() => setHotelOpen(false)}>
+        <SafeAreaView style={{ flex: 1 }}>
+          <HotelsScreen onClose={() => setHotelOpen(false)} />
+        </SafeAreaView>
+      </Modal>
       <Modal visible={!!storesCat} animationType="slide" onRequestClose={() => setStoresCat(null)}>
         <SafeAreaView style={{ flex: 1 }}>
           <StoresByCategory category={storesCat} onBack={() => setStoresCat(null)}
@@ -119,7 +133,7 @@ export default function App() {
     if (SUPABASE_ENABLED) initPush().catch(() => {});
   }, []);
 
-  if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: '#0E7C5B' }} />;
+  if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: '#008A44' }} />;
   return (
     <LangCtx.Provider value={{ lang, setLang }}>
       <StoreProvider>

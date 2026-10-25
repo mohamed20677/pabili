@@ -1,4 +1,4 @@
-// Pabili PH — real photo pipeline: camera/gallery → resize+compress → Supabase Storage → public URL.
+// Galabili PH — real photo pipeline: camera/gallery → resize+compress → Supabase Storage → public URL.
 // Replaces the old simulated photos and the old uploadOrderPhoto(), which expected a browser File
 // object (does not exist in React Native), duplicated the bucket in the path, and was never called.
 import { Alert } from 'react-native';
@@ -35,7 +35,7 @@ async function pick(source, square) {
   };
   if (source === 'camera') {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
-    if (!perm.granted) throw new Error('Camera permission is off. Enable it in Android Settings → Apps → Pabili → Permissions.');
+    if (!perm.granted) throw new Error('Camera permission is off. Enable it in Android Settings → Apps → Galabili → Permissions.');
     return ImagePicker.launchCameraAsync(opts);
   }
   return ImagePicker.launchImageLibraryAsync(opts);

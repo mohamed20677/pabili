@@ -219,63 +219,98 @@ export function StoresByCategory({ category, onPick, onBack, onAddCart }) {
   );
 }
 
-export function HomeScreen({ goNew, goStores, goCart, goRide }) {
+export function HomeScreen({ goNew, goStores, goCart, goRide, goHotels, goIntercity }) {
   const { s, cartTotals } = useStore();
   const T = useT();
+  const [sheet, setSheet] = useState(false);
   const cats = s.settings.categories;
   const t = cartTotals();
+  // V30: Grab-style home — mint header with search + avatar, 4-column services
+  // grid, wallet/points cards, cream promo banner, and an "All services" sheet.
+  const tile = (emoji, label, onPress) => (
+    <Pressable key={label} onPress={onPress} style={{ width: '25%', alignItems: 'center', marginVertical: 10 }}>
+      <View style={{ width: 58, height: 58, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: '#E8F7F4' }}>
+        <Txt s={26}>{emoji}</Txt>
+      </View>
+      <Txt s={11} style={{ marginTop: 5, textAlign: 'center' }}>{label}</Txt>
+    </Pressable>
+  );
+  const sheetTile = (emoji, label, onPress) => (
+    <Pressable key={label} onPress={() => { setSheet(false); onPress(); }} style={{ width: '25%', alignItems: 'center', marginVertical: 10 }}>
+      <View style={{ width: 58, height: 58, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: '#E8F7F4' }}>
+        <Txt s={26}>{emoji}</Txt>
+      </View>
+      <Txt s={11} style={{ marginTop: 5, textAlign: 'center' }}>{label}</Txt>
+    </Pressable>
+  );
   return (
+    <View style={{ flex: 1 }}>
     <ScrollView style={{ flex: 1, backgroundColor: C.paper }}>
-      <View style={{ backgroundColor: '#EAF3EF', padding: 16, paddingTop: 8, borderBottomLeftRadius: 24, borderBottomRightRadius: 24 }}>
-        <Pressable style={{ flexDirection: 'row', alignItems: 'center' }} onPress={goCart}>
-          <Txt s={17}>📍</Txt>
-          <View style={{ flex: 1, marginLeft: 6 }}>
-            <Txt b s={14}>{s.addresses.find((a) => a.default)?.label || 'Saved address'} — <Txt s={12} c={C.mute}>{(s.addresses.find((a) => a.default) || {}).addr || 'Tap to add'}</Txt></Txt>
+      <View style={{ backgroundColor: '#E8F7F4', padding: 16, paddingTop: 10, borderBottomLeftRadius: 24, borderBottomRightRadius: 24 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <View style={{ flex: 1, backgroundColor: '#fff', borderRadius: 22, paddingVertical: 11, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: C.line }}>
+            <Txt s={15} c={C.mute}>🔍</Txt>
+            <Txt c={C.mute} s={13} style={{ marginLeft: 8 }}>Search services, stores…</Txt>
           </View>
-          {t.items > 0 ? (
+          <Pressable onPress={goCart} style={{ marginLeft: 10 }}>
+            <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: C.green, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+              {s.profile.avatar
+                ? <Image source={{ uri: s.profile.avatar }} style={{ width: 40, height: 40 }} />
+                : <Txt s={17} c="#fff">👤</Txt>}
+            </View>
+          </Pressable>
+        </View>
+        <Pressable style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12 }} onPress={goCart}>
+          <Txt s={15}>📍</Txt>
+          <View style={{ flex: 1, marginLeft: 6 }}>
+            <Txt b s={13}>{s.addresses.find((a) => a.default)?.label || 'Saved address'} — <Txt s={11} c={C.mute}>{(s.addresses.find((a) => a.default) || {}).addr || 'Tap to add'}</Txt></Txt>
+          </View>
+          {t.items > 0 && (
             <View style={{ backgroundColor: C.gold, borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3 }}>
               <Txt s={11} b c="#fff">🛒 {t.items} · {peso(t.total)}</Txt>
             </View>
-          ) : (<Txt c={C.mute}>⌄</Txt>)}
+          )}
         </Pressable>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 14 }}>
-          {cats.map((c2, i) => (
-            <Pressable key={c2} onPress={() => goStores(c2)} style={{ alignItems: 'center', marginRight: 16 }}>
-              <View style={{ width: 58, height: 58, borderRadius: 16, alignItems: 'center', justifyContent: 'center',
-                             backgroundColor: i === 0 ? C.green : '#fff', borderWidth: 1, borderColor: C.line }}>
-                <Txt s={24}>{CATEGORY_ICONS[c2] || '🏪'}</Txt>
-              </View>
-              <Txt s={11} b={i === 0} c={i === 0 ? C.green : C.ink} style={{ marginTop: 4 }}>{c2}</Txt>
-            </Pressable>
-          ))}
-        </ScrollView>
-        <View style={{ backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: C.line,
-                       padding: 13, marginTop: 14, flexDirection: 'row', alignItems: 'center' }}>
-          <Txt s={16} c={C.mute}>🔍</Txt>
-          <Txt c={C.mute} s={14} style={{ marginLeft: 8 }}>{T('howHelp')}</Txt>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 }}>
+          {tile('🛒', 'Errand', () => goNew(null))}
+          {tile('🍔', 'Food', () => goStores('Food'))}
+          {tile('🛍', 'Mart', () => goStores('Supermarket'))}
+          {tile('📦', 'Express', () => goNew('Parcel'))}
+          {tile('🚕', 'Ride', goRide)}
+          {tile('🚌', 'Intercity', goIntercity)}
+          {tile('🏨', 'Hotels', goHotels)}
+          {tile('☑️', 'All', () => setSheet(true))}
         </View>
-      </View>
-
-      <View style={{ margin: 14, borderRadius: 18, overflow: 'hidden', backgroundColor: '#111' }}>
-        <View style={{ padding: 18 }}>
-          <Txt s={17} b c={C.gold}>{s.settings.banner.title}</Txt>
-          <Txt s={13} c="#fff" style={{ marginTop: 4 }}>Any store, even without an app</Txt>
-          <Pressable onPress={() => goNew(null)} style={{ backgroundColor: '#fff', borderRadius: 20, paddingVertical: 9, paddingHorizontal: 18, alignSelf: 'flex-start', marginTop: 12 }}>
-            <Txt b s={13}>{s.settings.banner.cta}</Txt>
+        <View style={{ flexDirection: 'row', marginTop: 6 }}>
+          <Pressable onPress={goCart} style={{ flex: 1, marginRight: 6, backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: C.line, padding: 12 }}>
+            <Txt s={11} c={C.mute}>Finance</Txt>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Txt b s={15}>{peso(s.wallet.balance)}</Txt>
+              <Txt s={16}>💳</Txt>
+            </View>
+          </Pressable>
+          <Pressable onPress={goCart} style={{ flex: 1, backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: C.line, padding: 12 }}>
+            <Txt s={11} c={C.mute}>Points</Txt>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Txt b s={15}>{s.profile.rating || 0}</Txt>
+              <Txt s={16}>⭐</Txt>
+            </View>
           </Pressable>
         </View>
       </View>
 
-      {s.settings.ride && s.settings.ride.enabled && (
-        <Pressable onPress={goRide} style={{ marginHorizontal: 14, marginTop: 4, backgroundColor: C.green, borderRadius: 18, padding: 16, flexDirection: 'row', alignItems: 'center' }}>
-          <Txt s={38}>🚕</Txt>
-          <View style={{ flex: 1, marginLeft: 12 }}>
-            <Txt b s={17} c="#fff">Need a ride?</Txt>
-            <Txt s={12} c="#fff" style={{ opacity: 0.92 }}>Request a driver, agree on the fare, get picked up.</Txt>
+      <Pressable onPress={() => goNew(null)} style={{ margin: 14, borderRadius: 18, overflow: 'hidden', backgroundColor: '#FEF5D1' }}>
+        <View style={{ padding: 18 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Txt s={17} b c={C.ink}>{s.settings.banner.title}</Txt>
+            <Txt b s={17} c={C.ink} style={{ marginLeft: 6 }}>›</Txt>
           </View>
-          <Txt b s={24} c="#fff">›</Txt>
-        </Pressable>
-      )}
+          <Txt s={13} c={C.mute} style={{ marginTop: 4 }}>Any store, even without an app</Txt>
+          <View style={{ backgroundColor: '#FFDE38', borderRadius: 14, paddingVertical: 9, paddingHorizontal: 16, alignSelf: 'flex-start', marginTop: 12 }}>
+            <Txt b s={13}>{s.settings.banner.cta}</Txt>
+          </View>
+        </View>
+      </Pressable>
 
       <Section title={'🚩 ' + T('nearYou')}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -306,8 +341,28 @@ export function HomeScreen({ goNew, goStores, goCart, goRide }) {
           <Txt s={12} c={C.mute}>{T('helpSub')}</Txt>
         </Card>
       </Section>
-      <View style={{ height: 90 }} />
+      <View style={{ height: 30 }} />
     </ScrollView>
+
+      <Modal visible={sheet} transparent animationType="slide" onRequestClose={() => setSheet(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,60,40,0.55)', justifyContent: 'flex-end' }}>
+          <Pressable style={{ flex: 1 }} onPress={() => setSheet(false)} />
+          <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 18, maxHeight: '72%' }}>
+            <View style={{ alignSelf: 'center', width: 44, height: 4, borderRadius: 2, backgroundColor: C.line, marginBottom: 12 }} />
+            <Txt b s={20}>Galabili Services</Txt>
+            <ScrollView style={{ marginTop: 8 }} showsVerticalScrollIndicator={false}>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                {cats.map((c2) => sheetTile(CATEGORY_ICONS[c2] || '🏪', c2, () => goStores(c2)))}
+                {sheetTile('🚕', 'Ride', goRide)}
+                {sheetTile('🚌', 'Intercity', goIntercity)}
+                {sheetTile('🏨', 'Hotels', goHotels)}
+              </View>
+            </ScrollView>
+            <View style={{ height: 16 }} />
+          </View>
+        </View>
+      </Modal>
+    </View>
   );
 }
 

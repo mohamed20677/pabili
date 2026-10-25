@@ -1,4 +1,4 @@
-// Pabili PH — theme, i18n, constants, shared rules + V9 payout providers
+// Galabili PH — theme, i18n, constants, shared rules + V9 payout providers
 //
 // V9 — Withdrawal rules (PH market): the minimum payout amount, the
 // flat fee per channel, the daily cap per user, and the saga
@@ -8,7 +8,7 @@
 import { createContext, useContext } from 'react';
 
 export const C = {
-  green: '#0E7C5B', greenDk: '#0A5C44', gold: '#F2A900', ink: '#17231E',
+  green: '#008A44', greenDk: '#004C3F', gold: '#F2A900', ink: '#17231E',
   mute: '#6B7A72', line: '#DCE5DF', paper: '#F6F8F5', card: '#FFFFFF',
   bad: '#C0392B', pinkBg: '#FDECEC', amber: '#B7791F',
 };
