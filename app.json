@@ -2,7 +2,7 @@
   "expo": {
     "name": "Galabili",
     "slug": "pabili-ph",
-    "version": "1.11.0",
+    "version": "1.12.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "platforms": [
@@ -20,7 +20,7 @@
     },
     "android": {
       "package": "com.pabili.ph",
-      "versionCode": 28,
+      "versionCode": 29,
       "permissions": [
         "INTERNET",
         "ACCESS_FINE_LOCATION",

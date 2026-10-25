@@ -342,6 +342,7 @@ export function HomeScreen({ goNew, goStores, goCart, goRide, goHotels, goInterc
           <Txt s={12} c={C.mute}>{T('helpSub')}</Txt>
         </Card>
       </Section>
+      </View>
       <View style={{ height: 30 }} />
     </ScrollView>
 
