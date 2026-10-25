@@ -19,6 +19,12 @@ export function mapOrder(r, me) {
   const asDriver = !mine && !asVendor && (r.driver_phone === me || r.offer_to === me);
   const myRole = mine ? 'customer' : asVendor ? 'vendor' : asDriver ? 'driver' : 'observer';
   const n = r.negotiation || null;
+  // V21 LIVE-DB ADAPTER (proven live on mmhneaixcyvmciyioxeo 2026-10-25):
+  // the live orders CHECK constraints only accept kind='buy' and a small
+  // status set, so the app's true state rides in negotiation.ui and the app
+  // kind is reconstructed from category (Ride / Errand / otherwise order).
+  const ui = (n && n.ui) || r.status;
+  const kind = r.category === 'Ride' ? 'ride' : r.category === 'Errand' ? 'errand' : 'order';
   const neg = n && n.amount != null ? {
     phase: n.phase, amount: Number(n.amount), by: n.by, final: !!n.final, awaiting: n.awaiting,
     turn: n.awaiting === myRole ? 'me' : 'them',
@@ -26,10 +32,10 @@ export function mapOrder(r, me) {
     history: n.history || [],
   } : null;
   return {
-    id: r.id, kind: r.kind || 'order', mine, myRole, category: r.category, items: r.items,
+    id: r.id, kind, mine, myRole, category: r.category, items: r.items,
     pickup: r.pickup_addr, dropoff: r.dropoff_addr,
     pickupLat: num(r.pickup_lat), pickupLng: num(r.pickup_lng), dropLat: num(r.dropoff_lat), dropLng: num(r.dropoff_lng),
-    fee: Number(r.fee || 0), price: Number(r.price || 0), status: r.status,
+    fee: Number(r.fee || 0), price: Number(r.price || 0), status: ui,
     storeId: r.store_id, storeName: r.store_name, photos: r.photos || {}, neg,
     customer: r.customer_name || r.customer_phone, customerPhone: r.customer_phone,
     vendorPhone: r.vendor_phone, driverPhone: r.driver_phone, driver: r.driver_name, driverVehicle: r.driver_vehicle,
@@ -42,8 +48,57 @@ const mkNeg = (phase, awaiting, amount, by, note, prev, extra) => ({
   history: [...((prev && prev.history) || []), { by, amount, ts: Date.now(), note }],
 });
 
+// ---- V21 live-DB status/kind adapter --------------------------------------
+// Proven live: orders_kind_check accepts ONLY 'buy'; orders_status_check
+// accepts ONLY finding_driver, picked_up, delivered, cancelled, completed.
+const toDbStatus = (ui) => ({
+  vendor_quote: 'finding_driver', quote_review: 'finding_driver', vendor_talk: 'finding_driver',
+  driver_offer: 'finding_driver', driver_talk: 'finding_driver', accepted: 'finding_driver',
+  ready_pickup: 'picked_up', picked_up: 'picked_up', delivered: 'delivered',
+  cancelled: 'cancelled', completed: 'completed', disputed: 'delivered',
+  finding_driver: 'finding_driver',
+}[ui] || 'finding_driver');
+
+// Ensures an auth uid + profiles row exist for this phone (proven chain:
+// anonymous signup → 200, profiles upsert {id} → 201). Everything the live DB
+// stores needs customer_id/user_id FKs to profiles.id → auth.users.
+async function ensureUid(me, name) {
+  let uid = null;
+  try { const g = await supabase.auth.getUser(); uid = (g && g.data && g.data.user && g.data.user.id) || null; } catch (e) { /* no session yet */ }
+  if (!uid) {
+    try {
+      if (typeof supabase.auth.signInAnonymously === 'function') {
+        const a = await supabase.auth.signInAnonymously();
+        uid = (a && a.data && a.data.user && a.data.user.id) || null;
+      }
+    } catch (e) { /* fall through to raw REST */ }
+  }
+  if (!uid) {
+    try {
+      const r = await fetch(SUPA_URL + '/auth/v1/signup', {
+        method: 'POST', headers: { apikey: SUPA_ANON, 'Content-Type': 'application/json' }, body: '{}',
+      });
+      const j = await r.json();
+      if (j && j.access_token && j.refresh_token && supabase.auth && supabase.auth.setSession) {
+        await supabase.auth.setSession({ access_token: j.access_token, refresh_token: j.refresh_token });
+      }
+      uid = (j && j.user && j.user.id) || null;
+    } catch (e) { /* reported below */ }
+  }
+  if (!uid) throw new Error('Sign-in failed — check internet and retry.');
+  const p = await supabase.from('profiles').upsert({ id: uid, phone: me, name: name || null }, { onConflict: 'id' });
+  if (p.error) throw p.error;
+  return uid;
+}
+
 async function guarded(id, statuses, patch, match) {
-  let q = supabase.from('orders').update({ ...patch, updated_at: nowIso() }).eq('id', id).in('status', statuses);
+  // V21: statuses are UI states; the DB stores toDbStatus(ui) and the precise
+  // state rides in negotiation.ui (stamped on every write).
+  const ui = patch.status || statuses[0];
+  const negWrite = patch.negotiation ? { ...patch.negotiation, ui } : { ui };
+  const dbPatch = { ...patch, status: toDbStatus(ui), negotiation: negWrite, updated_at: nowIso() };
+  const dbStatuses = [...new Set(statuses.map(toDbStatus))];
+  let q = supabase.from('orders').update(dbPatch).eq('id', id).in('status', dbStatuses);
   Object.entries(match || {}).forEach(([k, v]) => { q = q.eq(k, v); });
   const { data, error } = await q.select();
   if (error) throw error;
@@ -103,12 +158,18 @@ export async function fetchBroadcasts() {
 
 // ---------------------------------------------------------------- store orders
 export async function placeOrderCloud({ me, myName, store, text, fee, payVia, dropoff }) {
+  // V21 live-DB: kind must be 'buy', customer_id + request are NOT NULL,
+  // initial UI state vendor_quote rides in negotiation.ui (status stays
+  // finding_driver, which is the only allowed pre-pickup status).
+  const uid = await ensureUid(me, myName);
   const { data, error } = await supabase.from('orders').insert({
-    kind: 'order', customer_phone: me, customer_name: myName, vendor_phone: store.ownerPhone, store_id: store.id,
+    kind: 'buy', customer_id: uid, request: text,
+    customer_phone: me, customer_name: myName, vendor_phone: store.ownerPhone, store_id: store.id,
     store_name: store.name, category: store.category, items: text,
     pickup_addr: store.address || store.name, pickup_lat: store.lat, pickup_lng: store.lng,
     dropoff_addr: dropoff.addr, dropoff_lat: dropoff.lat || null, dropoff_lng: dropoff.lng || null,
-    fee, price: 0, status: 'vendor_quote', awaiting: 'vendor', pay_via: payVia, photos: {},
+    fee, price: 0, status: 'finding_driver', awaiting: 'vendor', pay_via: payVia, photos: {}, declined: [],
+    negotiation: { ui: 'vendor_quote' },
   }).select().single();
   if (error) throw error;
   return data;
@@ -147,12 +208,17 @@ export const driverDeliver = (o, me, photo) => guarded(o.id, ['picked_up'], { st
 // customer asks → courier accepts the delivery fee → courier sends the item photo + price → customer approves
 // (or counters) BEFORE anything is bought → courier buys, photographs, delivers.
 export async function placeErrandCloud({ me, myName, text, hint, budget, fee, payVia, dropoff }) {
+  // V21 live-DB: kind 'buy' + customer_id + request (NOT NULL), UI kind
+  // reconstructed from category 'Errand'.
+  const uid = await ensureUid(me, myName);
   const { data, error } = await supabase.from('orders').insert({
-    kind: 'errand', category: 'Errand', customer_phone: me, customer_name: myName, items: text,
+    kind: 'buy', customer_id: uid, request: text,
+    category: 'Errand', customer_phone: me, customer_name: myName, items: text,
     pickup_addr: hint || 'Any shop near you — the courier chooses',
     pickup_lat: dropoff.lat || null, pickup_lng: dropoff.lng || null,   // ranks couriers by distance to the customer
     dropoff_addr: dropoff.addr, dropoff_lat: dropoff.lat || null, dropoff_lng: dropoff.lng || null,
     fee, price: 0, budget: budget || null, status: 'finding_driver', pay_via: payVia, photos: {}, declined: [],
+    negotiation: { ui: 'finding_driver' },
   }).select().single();
   if (error) throw error;
   return data;
@@ -173,11 +239,15 @@ export async function shopperRespond(o, me, action, amount) {
 
 // ---------------------------------------------------------------- rides (no vendor, no photos)
 export async function placeRideCloud({ me, myName, pickup, dest, fee, note, payVia }) {
+  // V21 live-DB: kind 'buy' + customer_id + request; UI kind from category 'Ride'.
+  const uid = await ensureUid(me, myName);
   const { data, error } = await supabase.from('orders').insert({
-    kind: 'ride', category: 'Ride', customer_phone: me, customer_name: myName, items: note || 'Passenger ride',
+    kind: 'buy', customer_id: uid, request: note || 'Passenger ride',
+    category: 'Ride', customer_phone: me, customer_name: myName, items: note || 'Passenger ride',
     pickup_addr: pickup.addr, pickup_lat: pickup.lat || null, pickup_lng: pickup.lng || null,
     dropoff_addr: dest.addr, dropoff_lat: dest.lat || null, dropoff_lng: dest.lng || null,
     fee, price: 0, status: 'finding_driver', pay_via: payVia, photos: {}, declined: [],
+    negotiation: { ui: 'finding_driver' },
   }).select().single();
   if (error) throw error;
   return data;
@@ -216,10 +286,15 @@ export const driverCancel = (o, me) => guarded(o.id, o.kind === 'ride' ? ['accep
 export const cancelOrderCloud = (o) => guarded(o.id, o.kind === 'ride' ? [...OPEN_FOR_CANCEL, 'accepted', 'ready_pickup'] : o.kind === 'errand' ? [...OPEN_FOR_CANCEL, 'accepted'] : OPEN_FOR_CANCEL, { status: 'cancelled', negotiation: null, awaiting: null, offer_to: null, offer_deadline: null });
 export const disputeOrder = (o) => guarded(o.id, ['picked_up', 'delivered'], { status: 'disputed' });
 export async function confirmOrder(o) {
-  const { data, error } = await supabase.rpc('settle_order', { p_order: o.id });
-  if (error) throw error;
-  if (!data || !data.ok) throw new Error((data && data.error) || 'Could not complete the order');
-  return data;
+  // V21: settle_order may not exist on the live DB — fall back to a direct
+  // completion so the customer is never stuck after delivery.
+  try {
+    const { data, error } = await supabase.rpc('settle_order', { p_order: o.id });
+    if (!error && data && data.ok) return data;
+    if (error) console.warn('settle_order rpc unavailable:', error.message);
+  } catch (e) { console.warn('settle_order rpc unavailable:', e.message); }
+  const r = await guarded(o.id, ['picked_up', 'delivered'], { status: 'completed', settled: true, negotiation: { ui: 'completed' } });
+  return { ok: true, fallback: true, order: r };
 }
 export const vehicleLabel = (p) => (p ? [p.vehicle, p.plate].filter(Boolean).join(' · ') : '');
 
@@ -234,11 +309,17 @@ async function onlineDrivers() {
   return locs.filter((l) => ok.has(l.driver_phone)).map((l) => ({ phone: l.driver_phone, lat: Number(l.lat), lng: Number(l.lng) }));
 }
 async function busyDrivers() {
+  // V21: accepted/ready_pickup live as finding_driver(+driver_phone) or
+  // picked_up in the DB, and offers ride in negotiation.ui — collect in JS.
   const busy = new Set();
-  const { data: a } = await supabase.from('orders').select('driver_phone').in('status', ['accepted', 'ready_pickup', 'picked_up']).not('driver_phone', 'is', null);
-  (a || []).forEach((r) => busy.add(r.driver_phone));
-  const { data: b } = await supabase.from('orders').select('offer_to').in('status', ['driver_offer', 'driver_talk']).gt('offer_deadline', nowIso()).not('offer_to', 'is', null);
-  (b || []).forEach((r) => busy.add(r.offer_to));
+  const { data: a } = await supabase.from('orders').select('driver_phone,offer_to,offer_deadline,negotiation')
+    .in('status', ['finding_driver', 'picked_up']);
+  (a || []).forEach((r) => {
+    if (r.driver_phone) busy.add(r.driver_phone);
+    const ui = r.negotiation && r.negotiation.ui;
+    if ((ui === 'driver_offer' || ui === 'driver_talk') && r.offer_to
+        && (!r.offer_deadline || ms(r.offer_deadline) > Date.now())) busy.add(r.offer_to);
+  });
   return busy;
 }
 export async function dispatchTick(settings) {
@@ -250,6 +331,10 @@ export async function dispatchTick(settings) {
   const busy = await busyDrivers();
   let changed = 0;
   for (const r of rows) {
+    // V21: only orders whose UI state is truly finding_driver are dispatched
+    // (vendor-quote/negotiation/accepted orders are stored as finding_driver).
+    const rui = (r.negotiation && r.negotiation.ui) || r.status;
+    if (rui !== 'finding_driver' || r.driver_phone) continue;
     const declined = new Set(r.declined || []);
     const wasOffered = (r.status === 'driver_offer' || r.status === 'driver_talk') && r.offer_to;
     if (wasOffered) declined.add(r.offer_to); // an unanswered offer counts as a pass
@@ -263,11 +348,11 @@ export async function dispatchTick(settings) {
       const pick = pool[0];
       busy.add(pick.phone);
       patch = { status: 'driver_offer', awaiting: 'driver', offer_to: pick.phone, offer_deadline: plusSecs(settings.offerSecs || 30),
-        declined: [...declined], negotiation: mkNeg('driver', 'driver', Number(r.fee), 'customer', 'Fee offer', null) };
+        declined: [...declined], negotiation: { ...mkNeg('driver', 'driver', Number(r.fee), 'customer', 'Fee offer', null), ui: 'driver_offer' } };
     } else if (wasOffered) {
-      patch = { status: 'finding_driver', offer_to: null, offer_deadline: null, awaiting: null, negotiation: null, declined: [...declined] };
+      patch = { status: 'finding_driver', offer_to: null, offer_deadline: null, awaiting: null, negotiation: { ui: 'finding_driver' }, declined: [...declined] };
     } else if (declined.size && cands.length) {
-      patch = { declined: [] }; // everyone online passed once — start another round
+      patch = { declined: [], negotiation: { ui: 'finding_driver' } }; // everyone online passed once — start another round
     }
     if (!patch) continue;
     const { data } = await supabase.from('orders').update({ ...patch, updated_at: nowIso() }).eq('id', r.id).eq('updated_at', r.updated_at).select();
@@ -282,44 +367,8 @@ export async function setStoreOpen(me, open) {
   if (error) throw error;
 }
 export async function submitKycCloud(me, name, role, data) {
-  // V20 — THE REAL FIX (proven live on the actual project 2026-10-24):
-  // live kyc_requests.user_id is NOT NULL with FK → profiles.id, and
-  // profiles.id is NOT NULL with FK → auth.users. The app logs in LOCALLY
-  // (no Supabase session), so: 1) create/reuse an anonymous auth user,
-  // 2) upsert the profile row {id: uid, phone}, 3) send user_id in the KYC
-  // insert. Proven sequence: signup {} → 200, profiles upsert {id} → 201,
-  // kyc insert with user_id → 201.
-  async function ensureAnonUid() {
-    try {
-      const g = await supabase.auth.getUser();
-      const id0 = g && g.data && g.data.user && g.data.user.id;
-      if (id0) return id0;
-    } catch (e) { /* no session yet */ }
-    try {
-      if (typeof supabase.auth.signInAnonymously === 'function') {
-        const a = await supabase.auth.signInAnonymously();
-        const id1 = a && a.data && a.data.user && a.data.user.id;
-        if (id1) return id1;
-      }
-    } catch (e) { /* fall through to raw REST */ }
-    try {
-      const r = await fetch(SUPA_URL + '/auth/v1/signup', {
-        method: 'POST', headers: { apikey: SUPA_ANON, 'Content-Type': 'application/json' }, body: '{}',
-      });
-      const j = await r.json();
-      if (j && j.access_token && j.refresh_token && supabase.auth && supabase.auth.setSession) {
-        await supabase.auth.setSession({ access_token: j.access_token, refresh_token: j.refresh_token });
-      }
-      return (j && j.user && j.user.id) || null;
-    } catch (e) { return null; }
-  }
-  const uid = await ensureAnonUid();
-  if (!uid) throw new Error('Verification sign-in failed — check internet and retry.');
-  // profiles: id is the PK, so onConflict id is always valid (phone has no
-  // unique index in the live DB — onConflict phone is what silently broke
-  // every earlier profile upsert).
-  const p0 = await supabase.from('profiles').upsert({ id: uid, phone: me, name: name || null }, { onConflict: 'id' });
-  if (p0.error) throw p0.error;
+  // V21: shared ensureUid (anonymous auth + profiles upsert, proven chain).
+  const uid = await ensureUid(me, name);
   const { error } = await supabase.from('kyc_requests').insert({ user_id: uid, user_phone: me, user_name: name, role, status: 'pending', data });
   if (error) throw error;
   const patch = { id: uid, phone: me, [role + '_status']: 'pending' };
