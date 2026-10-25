@@ -12,7 +12,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Workflow version check
-        run: echo "=== PABILI-PH BUILD V14 (ZERO-INPUT FIX) ==="
+        run: echo "=== PABILI-PH BUILD V27 (DISPATCH SELF-TEST)"
 
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -81,6 +81,32 @@ jobs:
 
       - name: Prebuild Android
         run: npx expo prebuild --platform android --clean
+
+      - name: Wire Firebase google-services
+        run: |
+          cp google-services.json android/app/google-services.json
+          python3 << 'PYEOF'
+          root = 'android/build.gradle'
+          s = open(root).read()
+          if 'com.google.gms:google-services' not in s:
+              s = s.replace('dependencies {', "dependencies {\n        classpath 'com.google.gms:google-services:4.4.2'", 1)
+              open(root, 'w').write(s)
+              print('root build.gradle: google-services classpath added')
+          else:
+              print('root build.gradle: classpath already present')
+          app = 'android/app/build.gradle'
+          s = open(app).read()
+          if 'com.google.gms.google-services' not in s:
+              marker = 'apply plugin: "com.facebook.react"'
+              if marker in s:
+                  s = s.replace(marker, marker + '\napply plugin: "com.google.gms.google-services"', 1)
+              else:
+                  s = s.rstrip() + '\napply plugin: "com.google.gms.google-services"\n'
+              open(app, 'w').write(s)
+              print('app build.gradle: google-services plugin applied')
+          else:
+              print('app build.gradle: plugin already present')
+          PYEOF
 
       - name: Bundle JS into APK
         run: npx expo export:embed --entry-file index.js --platform android --dev false --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res

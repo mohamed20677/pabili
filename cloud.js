@@ -195,7 +195,7 @@ export async function placeOrderCloud({ me, myName, store, text, fee, payVia, dr
     pickup_addr: store.address || store.name, pickup_lat: store.lat, pickup_lng: store.lng,
     dropoff_addr: dropoff.addr, dropoff_lat: dropoff.lat || null, dropoff_lng: dropoff.lng || null,
     fee, price: 0, status: 'finding_driver', awaiting: 'vendor', pay_via: payVia, photos: {}, declined: [],
-    negotiation: { ui: 'vendor_quote' },
+    negotiation: { ui: 'vendor_quote' }, updated_at: nowIso(),  // V27: legacy table has no default
   }).select().single();
   if (error) throw error;
   return data;
@@ -244,7 +244,7 @@ export async function placeErrandCloud({ me, myName, text, hint, budget, fee, pa
     pickup_lat: dropoff.lat || null, pickup_lng: dropoff.lng || null,   // ranks couriers by distance to the customer
     dropoff_addr: dropoff.addr, dropoff_lat: dropoff.lat || null, dropoff_lng: dropoff.lng || null,
     fee, price: 0, budget: budget || null, status: 'finding_driver', pay_via: payVia, photos: {}, declined: [],
-    negotiation: { ui: 'finding_driver' },
+    negotiation: { ui: 'finding_driver' }, updated_at: nowIso(),  // V27
   }).select().single();
   if (error) throw error;
   return data;
@@ -273,7 +273,7 @@ export async function placeRideCloud({ me, myName, pickup, dest, fee, note, payV
     pickup_addr: pickup.addr, pickup_lat: pickup.lat || null, pickup_lng: pickup.lng || null,
     dropoff_addr: dest.addr, dropoff_lat: dest.lat || null, dropoff_lng: dest.lng || null,
     fee, price: 0, status: 'finding_driver', pay_via: payVia, photos: {}, declined: [],
-    negotiation: { ui: 'finding_driver' },
+    negotiation: { ui: 'finding_driver' }, updated_at: nowIso(),  // V27
   }).select().single();
   if (error) throw error;
   return data;
@@ -383,7 +383,12 @@ export async function dispatchTick(settings) {
     const declined = new Set(r.declined || []);
     const wasOffered = (r.status === 'driver_offer' || r.status === 'driver_talk') && r.offer_to;
     if (wasOffered) declined.add(r.offer_to); // an unanswered offer counts as a pass
-    const pool = cands.filter((c) => c.phone !== r.customer_phone && !declined.has(c.phone) && !busy.has(c.phone));
+    // V27 SELF-TEST DISPATCH: the old `c.phone !== r.customer_phone` excluded
+    // the only online driver whenever the order came from the same phone
+    // (the live proof: order 87750e1a, customer +639812345678 = the driver's
+    // own number — pool was always empty). A courier may now serve their own
+    // errand — exactly what a one-device beta needs.
+    const pool = cands.filter((c) => !declined.has(c.phone) && !busy.has(c.phone));
     pool.sort((a, b) => {
       const da = distanceKm({ lat: num(r.pickup_lat), lng: num(r.pickup_lng) }, a), db = distanceKm({ lat: num(r.pickup_lat), lng: num(r.pickup_lng) }, b);
       return (da == null ? 1e9 : da) - (db == null ? 1e9 : db);
@@ -400,7 +405,11 @@ export async function dispatchTick(settings) {
       patch = { declined: [], negotiation: { ui: 'finding_driver' } }; // everyone online passed once — start another round
     }
     if (!patch) continue;
-    const { data } = await supabase.from('orders').update({ ...patch, updated_at: nowIso() }).eq('id', r.id).eq('updated_at', r.updated_at).select();
+    // V27: the legacy orders table has updated_at = NULL (no default on old
+    // rows), so the old `.eq('updated_at', r.updated_at)` optimistic lock
+    // matched NOTHING and dispatch silently never assigned. Match on id —
+    // beta-safe; the status/offer flow keeps its own guards.
+    const { data } = await supabase.from('orders').update({ ...patch, updated_at: nowIso() }).eq('id', r.id).select();
     if (data && data.length) changed += 1;
   }
   return changed;
