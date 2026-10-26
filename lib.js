@@ -33,7 +33,7 @@ const STR = {
     howHelp: 'How can we help you today?', orderAny: 'Order anything', sendAny: 'Send anything',
     orderAnySub: 'Order anything you can think of', sendAnySub: 'Have something to deliver? We pick it up and drop it off',
     mostReq: 'Most requested', nearYou: 'We are with you, near you', needHelp: 'Need help?',
-    helpSub: 'From LPG tanks to furniture moving — leave the heavy lifting to us',
+    helpSub: 'Everything delivered — rides between cities and hotel rooms for your trip',
     orderDetails: 'Order details', pickCat: 'Pick a category and describe your order in detail.',
     describe: 'Describe what you need...', deliveryDetails: 'Add delivery details',
     pickupFrom: 'Pickup from', chooseStore: 'Choose the store or pin the location',

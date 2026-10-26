@@ -13,7 +13,7 @@ const dateLabel = (iso) => {
   catch (e) { return iso; }
 };
 
-export default function IntercityBoard({ open, mine, busy, onSend }) {
+export default function IntercityBoard({ open, mine, busy, onSend, note }) {
   const [fare, setFare] = useState({});     // requestId -> driver's own fare
   const [msg, setMsg] = useState({});       // requestId -> optional message
   const openIds = new Set((open || []).map((t) => t.id));
@@ -23,7 +23,12 @@ export default function IntercityBoard({ open, mine, busy, onSend }) {
     <View>
       <Section title="🚌 Open intercity trips">
         <Txt s={11} c={C.mute}>Passengers posted these trips. Send YOUR fare and message — the passenger sees every offer sorted by price and picks one. Contact details open only after they book you.</Txt>
-        {(open || []).length === 0 && (
+        {note ? (
+          <Card style={{ marginBottom: 8, borderColor: C.bad, borderWidth: 1 }}>
+            <Txt s={12} c={C.bad}>Couldn't load trips: {note}</Txt>
+          </Card>
+        ) : null}
+        {(open || []).length === 0 && !note && (
           <Txt s={12} c={C.mute} style={{ marginTop: 8 }}>No open trips right now. Passengers post trips from the app's "Travel between cities" button.</Txt>
         )}
         {(open || []).map((t) => {

@@ -23,7 +23,7 @@ const DEFAULTS = () => ({
   wallet: { balance: 0, credit: 0, tx: [], withdrawals: [] },
   cart: { items: [], shipping_fee: 25 },
   catalog: [],
-  orders: [], alerts: [], audit: [], users: [], stores: [], kyc: [], intercity: [], hotels: [], hotelBookings: [], myStore: null, frozen: false, net: 'ok',
+  orders: [], alerts: [], audit: [], users: [], stores: [], kyc: [], intercity: [], intercityNote: null, hotels: [], hotelBookings: [], myStore: null, frozen: false, net: 'ok',
   driverLocations: {}, driverOnline: false,
   settings: {
     commissions: { customerPct: 3, vendorPct: 8, driverPct: 10 },
@@ -135,8 +135,13 @@ export function StoreProvider({ children }) {
         }
         try { patch.hotels = await C.fetchHotels(); patch.hotelBookings = await C.fetchHotelBookingsAll(me); } catch (e) { /* hotels table not set up yet */ }
       }
-      const searching = patch.orders.some((o) => o.mine && C.SEARCHING.includes(o.status));
-      if ((cur.driverOnline || searching) && (await C.dispatchTick(settings)) > 0) patch.orders = await C.fetchMyOrders(me);
+      // V36: intercity open trips on EVERY tick (one cheap query) and a VISIBLE
+      // note on failure — the tab must never be a blind empty list again.
+      try { patch.intercity = await C.fetchIntercityAll(me); patch.intercityNote = null; }
+      catch (e) { patch.intercityNote = String((e && e.message) || e); }
+    const searching = patch.orders.some((o) => o.mine && C.SEARCHING.includes(o.status)) || (patch.orders || []).some((o) => (o.myRoles || []).includes('driver') && (o.status === 'driver_offer' || o.status === 'driver_talk') && o.neg && o.neg.turn === 'me');
+    // V35: dispatch runs on every online driver's phone too (it assigns the offers)
+    if ((cur.driverOnline || searching) && (await C.dispatchTick(settings)) > 0) patch.orders = await C.fetchMyOrders(me);
     }
     // alerts from order changes (skip the very first load so old orders don't flood)
     const newAlerts = [];
@@ -304,7 +309,7 @@ export function StoreProvider({ children }) {
       const cur = sRef.current;
       const store = cur.stores.find((x) => x.id === d.storeId);
       if (!store) throw new Error('Choose a store first.');
-      return C.placeOrderCloud({ me: me(), myName: cur.profile.name, store, text: d.text, fee: d.fee, payVia: d.payVia || 'cash', dropoff: d.dropoff });
+      return C.placeOrderCloud({ me: me(), myName: cur.profile.name, store, text: d.text, fee: d.fee, payVia: d.payVia || 'cash', dropoff: d.dropoff, settings: sRef.current.settings });
     }),
     placeErrand: (d) => run('Errand', async () => {
       guardFrozen();
@@ -312,7 +317,7 @@ export function StoreProvider({ children }) {
       return C.placeErrandCloud({ me: me(), myName: cur.profile.name, text: d.text, hint: d.hint, budget: d.budget, fee: d.fee, payVia: d.payVia || 'cash', dropoff: d.dropoff });
     }),
     shopperQuote: (o0, price, photo) => run('Price', () => C.shopperQuote(ord(o0), me(), price, photo)),
-    shopperRespond: (o0, action, amount) => run('Price', () => C.shopperRespond(ord(o0), me(), action, amount)),
+    shopperRespond: (o0, action, amount) => run('Price', () => C.shopperRespond(ord(o0), me(), action, amount, sRef.current.settings)),
     placeRide: (d) => run('Ride request', async () => {
       guardFrozen();
       const cur = sRef.current, r = cur.settings.ride;
@@ -324,7 +329,7 @@ export function StoreProvider({ children }) {
     quoteAnswer: (o0, action, amount) => run('Quote', async () => {
       const o = ord(o0);
       if (action === 'accept') needWallet(o.payVia, o.neg.amount + o.fee);
-      return C.customerQuote(o, action, amount);
+      return C.customerQuote(o, action, amount, sRef.current.settings);
     }),
     driverAnswer: (o0, action, amount) => run('Courier offer', async () => C.customerDriverAnswer(ord(o0), action, amount, sRef.current.settings)),
     cancelOrder: (o0) => run('Cancel', () => C.cancelOrderCloud(ord(o0))),
@@ -333,7 +338,7 @@ export function StoreProvider({ children }) {
 
     // ---- vendor ----
     vendorQuote: (o0, price, photo) => run('Quote', () => C.vendorQuote(ord(o0), price, photo)),
-    vendorRespond: (o0, action, amount) => run('Price', () => C.vendorRespond(ord(o0), action, amount)),
+    vendorRespond: (o0, action, amount) => run('Price', () => C.vendorRespond(ord(o0), action, amount, sRef.current.settings)),
     vendorDecline: (o0) => run('Order', () => C.vendorDecline(ord(o0))),
     vendorPacked: (o0, photo) => run('Packed', () => C.vendorPacked(ord(o0), photo)),
 

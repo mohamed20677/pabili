@@ -62,7 +62,10 @@ export default function Driver() {
   const completed = mine.filter((o) => o.driverPhone === phone && o.status === 'completed');
   // V28 intercity: open trips visible to approved drivers; own trips always visible
   const approvedDriver = ((s.roles && s.roles.driver && s.roles.driver.status) === 'approved');
-  const openIntercity = approvedDriver ? (s.intercity || []).filter((t) => t.status === 'open') : [];
+  // V36: the Driver board itself is role-gated (only approved drivers render
+  // here), so the extra approvedDriver check hid trips whenever the profile
+  // sync was late or failing. Open trips show unconditionally now.
+  const openIntercity = (s.intercity || []).filter((t) => t.status === 'open');
   const myIntercity = (s.intercity || []).filter((t) => (t.offers || []).some((o) => o.driverPhone === phone) || (t.bookedOffer && t.bookedOffer.driverPhone === phone));
   const earned = (s.wallet.tx || []).filter((t) => t.kind === 'delivery').reduce((a, t) => a + t.amount, 0);
   const pct = s.settings.commissions.driverPct;
@@ -97,7 +100,7 @@ export default function Driver() {
         <Btn small kind={board === 'intercity' ? 'main' : 'ghost'} title={'🚌 Intercity' + (openIntercity.length ? ' (' + openIntercity.length + ')' : '')} onPress={() => setBoard('intercity')} style={{ flex: 1 }} />
       </View>
       {board === 'intercity' && (
-        <IntercityBoard open={openIntercity} mine={myIntercity} busy={busy} onSend={sendIntercityOffer} />
+        <IntercityBoard open={openIntercity} mine={myIntercity} busy={busy} onSend={sendIntercityOffer} note={s.intercityNote} />
       )}
       {board === 'jobs' && (<>
       <Section title="📥 Incoming offers">
@@ -122,7 +125,7 @@ export default function Driver() {
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
                 <Field value={counter[o.id] || ''} onChangeText={(v) => setCounter({ ...counter, [o.id]: v.replace(/[^0-9]/g, '') })}
-                       keyboardType="number-pad" placeholder="Your fare ₱" style={{ flex: 1, padding: 10 }} />
+                       keyboardType="number-pad" placeholder="Your fare ₱ (±10% of the offer)" style={{ flex: 1, padding: 10 }} />
                 <Btn small kind="ghost" title="Counter" disabled={!counter[o.id] || Number(counter[o.id]) === o.neg.amount}
                      onPress={() => { driverOfferAnswer(o, 'counter', Number(counter[o.id])); setCounter({ ...counter, [o.id]: '' }); }}
                      style={{ marginLeft: 8, marginTop: 0, paddingHorizontal: 14 }} />

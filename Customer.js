@@ -110,7 +110,7 @@ export function NegotiationBox({ title, amount, note, onAccept, onCounter, onRef
       </View>
       {canCounter && onCounter ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
-          <Field value={v} onChangeText={(x) => setV(x.replace(/[^0-9]/g, ''))} keyboardType="number-pad" placeholder="Your offer ₱" style={{ flex: 1, padding: 10 }} />
+          <Field value={v} onChangeText={(x) => setV(x.replace(/[^0-9]/g, ''))} keyboardType="number-pad" placeholder="Your offer ₱ (±10%)" style={{ flex: 1, padding: 10 }} />
           <Btn small kind="ghost" title="Counter" disabled={!v || Number(v) === amount}
                onPress={() => go(async () => { await onCounter(Number(v)); setV(''); })} style={{ marginLeft: 8, marginTop: 0, paddingHorizontal: 14 }} />
         </View>
@@ -219,6 +219,39 @@ export function StoresByCategory({ category, onPick, onBack, onAddCart }) {
   );
 }
 
+// V33: the agreed order sequence, visualized — 1 sent to store → 2 store-quote
+// negotiation (±10%, deadline) → 3 driver stage → 4 on the way → 5 delivered.
+const STAGE_LABELS = {
+  order: ['Sent to store', 'Store quote', 'Driver stage', 'On the way', 'Delivered'],
+  ride: ['Requested', 'Driver offer', 'Confirmed', 'On the way', 'Arrived'],
+  errand: ['Sent to courier', 'Price talk', 'Buying stage', 'On the way', 'Delivered'],
+};
+function stageIndexOf(status) {
+  if (status === 'vendor_quote') return 0;
+  if (['quote_review', 'vendor_talk'].includes(status)) return 1;
+  if (['finding_driver', 'driver_offer', 'driver_talk', 'accepted', 'ready_pickup'].includes(status)) return 2;
+  if (status === 'picked_up') return 3;
+  return 4;
+}
+function StageTracker({ status, kind }) {
+  const idx = stageIndexOf(status);
+  const labels = STAGE_LABELS[kind] || STAGE_LABELS.order;
+  return (
+    <View style={{ backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: C.line, padding: 12, marginBottom: 10 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        {labels.map((l, i) => (
+          <View key={l} style={{ flex: 1, alignItems: 'center' }}>
+            <View style={{ width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: i <= idx ? C.green : C.line }}>
+              <Txt s={11} b c="#fff">{i < idx ? '✓' : String(i + 1)}</Txt>
+            </View>
+            <Txt s={9} c={i <= idx ? C.green : C.mute} style={{ marginTop: 3, textAlign: 'center' }}>{l}</Txt>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 export function HomeScreen({ goNew, goStores, goCart, goRide, goHotels, goIntercity }) {
   const { s, cartTotals } = useStore();
   const T = useT();
@@ -299,6 +332,21 @@ export function HomeScreen({ goNew, goStores, goCart, goRide, goHotels, goInterc
         </View>
       </View>
 
+      {(() => {
+        // V33 ORDER SPEC: the live order follows the agreed sequence ON THE HOME
+        // screen with the current-stage action buttons (Orders tab = history).
+        const act = (s.orders || []).filter((o) => o.mine && !['completed', 'cancelled', 'disputed'].includes(o.status))
+          .sort((a, b) => (b.created || 0) - (a.created || 0))[0];
+        if (!act) return null;
+        return (
+          <View style={{ marginHorizontal: 14, marginTop: 12 }}>
+            <Txt b s={16} style={{ marginBottom: 6 }}>🔥 Your live order</Txt>
+            <StageTracker status={act.status} kind={act.kind} />
+            <OrderCard o={act} />
+          </View>
+        );
+      })()}
+
       <Pressable onPress={() => goNew(null)} style={{ margin: 14, borderRadius: 18, overflow: 'hidden', backgroundColor: '#FEF5D1' }}>
         <View style={{ padding: 18 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -312,6 +360,7 @@ export function HomeScreen({ goNew, goStores, goCart, goRide, goHotels, goInterc
         </View>
       </Pressable>
 
+      <View style={{ paddingHorizontal: 14 }}>
       <Section title={'🚩 ' + T('nearYou')}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           <Pressable onPress={() => goNew(null)} style={{ width: 200, marginRight: 12 }}>
@@ -341,6 +390,7 @@ export function HomeScreen({ goNew, goStores, goCart, goRide, goHotels, goInterc
           <Txt s={12} c={C.mute}>{T('helpSub')}</Txt>
         </Card>
       </Section>
+      </View>
       <View style={{ height: 30 }} />
     </ScrollView>
 
@@ -378,9 +428,21 @@ export function OrderForm({ preselectStore, onClose, onPlaced }) {
   const [store, setStore] = useState(preselectStore || null);
   const [busy, setBusy] = useState(false);
   const f = Number(fee) || 0;
+  const [feeEst, setFeeEst] = useState(null);
   const addr = (s.addresses || []).find((a) => a.default) || (s.addresses || [])[0];
   const stores = listStoresAll();
   const errand = mode === 'errand';
+  // V31 ORDER SPEC: delivery fee by zone + straight-line distance (same rule as rides).
+  const suggestFee = () => {
+    setFeeEst({ busy: true });
+    const dest = { lat: addr && addr.lat, lng: addr && addr.lng };
+    const origin = (!errand && store) ? { lat: store.lat, lng: store.lng } : dest;
+    const km = distanceKm(origin, dest);
+    if (km == null) { setFeeEst({ km: null, error: 'Save the delivery address with GPS (Use my current location) so the fee can be computed by distance.' }); return; }
+    const zone = km <= 3 ? 'Zone 1 · near' : km <= 8 ? 'Zone 2 · mid' : 'Zone 3 · far';
+    const suggested = Math.max(20, Math.round((20 + 10 * km) / 5) * 5);
+    setFeeEst({ km, zone, fee: suggested }); setFee(String(suggested));
+  };
   const place = async () => {
     setBusy(true);
     const dropoff = { addr: addr.addr, lat: addr.lat, lng: addr.lng };
@@ -439,6 +501,11 @@ export function OrderForm({ preselectStore, onClose, onPlaced }) {
           ) : <Card><Txt s={13} c={C.bad}>Add a delivery address first (My Page → Saved addresses).</Txt></Card>}
         </Section>
         <Section title={errand ? '3 · Courier fee (delivery only)' : T('feeOffer')}>
+          {feeEst && feeEst.error && <Txt s={12} c={C.amber} style={{ marginBottom: 6 }}>{feeEst.error}</Txt>}
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+            <Btn small kind="ghost" busy={feeEst && feeEst.busy} title="📡 Suggest fee by distance" onPress={suggestFee} style={{ marginRight: 10, marginTop: 0 }} />
+            {feeEst && feeEst.km != null && <Txt s={12} c={C.green} style={{ flex: 1 }}>≈ {fmtKm(feeEst.km)} · {feeEst.zone} · suggested {peso(feeEst.fee)}</Txt>}
+          </View>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Field value={fee} onChangeText={(v) => setFee(v.replace(/[^0-9]/g, ''))} keyboardType="number-pad" style={{ width: 110, textAlign: 'center', fontSize: 22, fontWeight: '800' }} />
             <Txt s={13} c={C.mute} style={{ marginLeft: 12, flex: 1 }}>the courier can accept or counter, and you decide{errand ? '. The items are paid on top, at the approved price.' : ''}</Txt>
@@ -555,6 +622,19 @@ function OrderCard({ o }) {
   const bad = o.status === 'cancelled', good = o.status === 'completed';
   const canCancel = ['vendor_quote', 'vendor_talk', 'finding_driver', 'driver_offer'].includes(o.status) || (ride && ['accepted', 'ready_pickup'].includes(o.status)) || (errand && o.status === 'accepted');
   const who = ride ? 'driver' : 'courier';
+  // V33: stage line under the title — the agreed sequence in words.
+  const stageLine = {
+    vendor_quote: '1/5 · Sent to the store — waiting for its quote',
+    quote_review: '2/5 · Store quoted — accept, counter (±10%) or cancel',
+    vendor_talk: '2/5 · Negotiating the final price with the store',
+    finding_driver: '3/5 · Final price agreed — assigning a driver',
+    driver_offer: '3/5 · Driver offered — accept, counter (±10%) or wait',
+    driver_talk: '3/5 · Negotiating with the driver (±10% rule)',
+    accepted: '3/5 · Driver confirmed — heading to pickup',
+    ready_pickup: errand ? '4/5 · Item bought — courier on the way' : '4/5 · Driver at pickup — preparing handover',
+    picked_up: '4/5 · On the way to you',
+    delivered: '5/5 · Delivered — confirm receipt',
+  }[o.status];
   return (
     <Card style={{ marginBottom: 12 }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
@@ -569,6 +649,7 @@ function OrderCard({ o }) {
       <Txt s={11} c={C.mute} style={{ marginTop: 4 }}>
         {ride ? 'Fare ' + peso(o.fee) : (errand ? 'Courier fee ' : 'Delivery ') + peso(o.fee) + (o.price ? ' · items ' + peso(o.price) + ' · total ' + peso(o.fee + o.price) : '')} · {o.payVia === 'wallet' ? '👛 wallet' : '💵 cash'}
       </Txt>
+      {stageLine && !ride && <View style={{ backgroundColor: '#EAF3EF', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginTop: 6, alignSelf: 'flex-start' }}><Txt s={11} b c={C.green}>{stageLine}</Txt></View>}
 
       {!ride && <PhotoTimeline o={o} />}
       {!ride && ['product', 'packed', 'pickup', 'delivery'].map((k) => (o.photos && o.photos[k]) ? <View key={k}>{photoBubble(o.photos[k])}</View> : null)}
