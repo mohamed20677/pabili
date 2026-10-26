@@ -4,17 +4,19 @@ import React, { useState } from 'react';
 import { Image, ScrollView, Switch, View } from 'react-native';
 import { C, peso, statusText, distanceKm, fmtKm } from './lib';
 import { useStore } from './store';
-import { takeProofPhoto } from './media';
+import { takeProofPhoto, captureAndUpload, BUCKETS } from './media';
 import { Btn, Card, Field, Section, Txt } from './ui';
 import { PhotoTimeline, photoBubble, NegotiationBox } from './Customer';
 
 export default function Vendor() {
-  const { s, vendorQuote, vendorRespond, vendorDecline, vendorPacked, toggleOnline, catalogAdd, catalogDel } = useStore();
+  const { s, vendorQuote, vendorRespond, vendorDecline, vendorPacked, toggleOnline, vendorMenuAdd, vendorMenuPrice, vendorMenuToggle, vendorMenuDel } = useStore();
   const [price, setPrice] = useState({});
   const [shots, setShots] = useState({}); // orderId -> uploaded product photo
   const [busy, setBusy] = useState(null);
   const [newName, setNewName] = useState('');
   const [newPrice, setNewPrice] = useState('');
+  const [newShot, setNewShot] = useState(null); // V37: product photo (uploaded)
+  const [priceEdit, setPriceEdit] = useState({});
   const owner = s.auth && s.auth.phone;
   const store = s.myStore;
 
@@ -28,6 +30,8 @@ export default function Vendor() {
   const done = mine.filter((o) => o.status === 'completed');
   const earnings = (s.wallet.tx || []).filter((t) => t.kind === 'sale').reduce((a, t) => a + t.amount, 0);
   const pct = s.settings.commissions.vendorPct;
+  // V37 MENU: the vendor's LIVE menu on the server (name + photo + price)
+  const myMenu = store ? (s.menu || []).filter((p) => p.storeId === store.id) : [];
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: C.paper, padding: 14 }} keyboardShouldPersistTaps="handled">
@@ -94,21 +98,50 @@ export default function Vendor() {
         {done.slice(0, 6).map((o) => <Card key={o.id} style={{ paddingVertical: 8, marginBottom: 6 }}><Txt s={12}>{o.items} · {peso(o.price)}</Txt></Card>)}
       </Section>}
 
-      <Section title="📦 My products">
-        {(s.catalog || []).map((p) => (
-          <Card key={p.id} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, paddingVertical: 10 }}>
-            <Txt s={14} style={{ flex: 1 }}>{p.name}</Txt>
-            <Txt b s={14} c={C.green}>{peso(p.price)}</Txt>
-            <Btn small kind="bad" title="✕" onPress={() => catalogDel(p.id)} style={{ marginLeft: 10, marginTop: 0, paddingHorizontal: 10 }} />
+      <Section title="📦 My menu (live — customers order from it)">
+        {!store && <Card><Txt s={13} c={C.mute}>Register your store first (My Page → Register my store) to build your menu.</Txt></Card>}
+        {store && myMenu.length === 0 && (
+          <Card><Txt s={13} c={C.mute}>No products yet — add your first item below. Customers see it instantly with its photo and price.</Txt></Card>
+        )}
+        {myMenu.map((p) => (
+          <Card key={p.id} style={{ marginBottom: 8, paddingVertical: 10 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              {p.image
+                ? <Image source={{ uri: p.image }} style={{ width: 52, height: 52, borderRadius: 12, marginRight: 10 }} />
+                : <View style={{ width: 52, height: 52, borderRadius: 12, marginRight: 10, backgroundColor: '#EAF3EF', alignItems: 'center', justifyContent: 'center' }}><Txt s={22}>🍽</Txt></View>}
+              <View style={{ flex: 1 }}>
+                <Txt b s={14}>{p.name}{!p.available ? '  ·  ⏸ hidden' : ''}</Txt>
+                <Txt b s={13} c={C.green}>{peso(p.price)}</Txt>
+              </View>
+              <View style={{ flexDirection: 'row' }}>
+                <Btn small kind={p.available ? 'bad' : 'main'} title={p.available ? '⏸ Hide' : '▶ Show'} onPress={() => vendorMenuToggle(p)} style={{ marginRight: 6, marginTop: 0 }} />
+                <Btn small kind="bad" title="✕" onPress={() => vendorMenuDel(p)} style={{ marginTop: 0, paddingHorizontal: 10 }} />
+              </View>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
+              <Field value={priceEdit[p.id] != null ? String(priceEdit[p.id]) : ''} onChangeText={(v) => setPriceEdit({ ...priceEdit, [p.id]: v.replace(/[^0-9]/g, '') })} keyboardType="number-pad" placeholder="Change price (₱)" style={{ flex: 1, padding: 9 }} />
+              <Btn small kind="ghost" title="Save" disabled={priceEdit[p.id] == null || priceEdit[p.id] === ''} onPress={() => { vendorMenuPrice(p, Number(priceEdit[p.id])); setPriceEdit({ ...priceEdit, [p.id]: '' }); }} style={{ marginLeft: 8, marginTop: 0 }} />
+            </View>
           </Card>
         ))}
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <Field value={newName} onChangeText={setNewName} placeholder="Product name" style={{ flex: 2, padding: 10 }} />
-          <Field value={newPrice} onChangeText={(v) => setNewPrice(v.replace(/[^0-9]/g, ''))} keyboardType="number-pad" placeholder="₱" style={{ flex: 1, marginLeft: 8, padding: 10 }} />
-          <Btn small title="Add" disabled={!newName || !newPrice} onPress={() => { catalogAdd(newName, Number(newPrice)); setNewName(''); setNewPrice(''); }}
-               style={{ marginLeft: 8, marginTop: 0, paddingHorizontal: 16 }} />
-        </View>
-        <Txt s={10} c={C.mute} style={{ marginTop: 4 }}>Your product list is private to this phone for now (customers don't see it yet).</Txt>
+        {store && (
+          <Card style={{ marginTop: 4 }}>
+            <Txt b s={14}>＋ Add a product</Txt>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
+              <Btn small kind={newShot ? 'ghost' : 'main'} busy={busy === 'mshot'} title={newShot ? '✓ Photo added — retake' : '📷 Product photo'} onPress={async () => {
+                setBusy('mshot');
+                try { const up = await captureAndUpload({ bucket: BUCKETS.orders, owner: owner || 'vendor', folder: 'products', square: true, title: 'Product photo' }); if (up) setNewShot(up.uri); } finally { setBusy(null); }
+              }} style={{ marginRight: 10, marginTop: 0 }} />
+              {newShot
+                ? <Image source={{ uri: newShot }} style={{ width: 44, height: 44, borderRadius: 10 }} />
+                : <Txt s={11} c={C.mute} style={{ flex: 1 }}>Shown on the customer's menu</Txt>}
+            </View>
+            <Field value={newName} onChangeText={setNewName} placeholder="Product name" style={{ marginTop: 8 }} />
+            <Field value={newPrice} onChangeText={(v) => setNewPrice(v.replace(/[^0-9]/g, ''))} keyboardType="number-pad" placeholder="Price (₱)" style={{ marginTop: 8 }} />
+            <Btn small title="＋ Add to menu" disabled={!newName || !newPrice} onPress={() => { vendorMenuAdd({ name: newName, price: Number(newPrice), image: newShot }); setNewName(''); setNewPrice(''); setNewShot(null); }} style={{ marginTop: 8 }} />
+          </Card>
+        )}
+        <Txt s={10} c={C.mute} style={{ marginTop: 4 }}>Menu prices are final — customers pay exactly these prices (no negotiation on registered-store orders).</Txt>
       </Section>
       <View style={{ height: 100 }} />
     </ScrollView>

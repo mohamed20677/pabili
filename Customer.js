@@ -417,21 +417,27 @@ export function HomeScreen({ goNew, goStores, goCart, goRide, goHotels, goInterc
 }
 
 export function OrderForm({ preselectStore, onClose, onPlaced }) {
-  const { s, placeOrder, placeErrand, listStoresAll } = useStore();
+  const { s, placeErrand, placeMenuOrder, listStoresAll } = useStore();
   const T = useT();
-  const [mode, setMode] = useState(preselectStore ? 'store' : 'errand'); // errand = a courier buys it at ANY shop
+  const [mode, setMode] = useState(preselectStore ? 'store' : 'errand'); // errand = a shopper buys it at ANY shop (link mandatory)
   const [text, setText] = useState('');
   const [hint, setHint] = useState('');
+  const [storeLink, setStoreLink] = useState('');
   const [budget, setBudget] = useState('');
   const [fee, setFee] = useState('20');
   const [pay, setPay] = useState('cash');
   const [store, setStore] = useState(preselectStore || null);
+  const [sel, setSel] = useState({}); // V37 MENU: productId -> qty (registered stores)
   const [busy, setBusy] = useState(false);
   const f = Number(fee) || 0;
   const [feeEst, setFeeEst] = useState(null);
   const addr = (s.addresses || []).find((a) => a.default) || (s.addresses || [])[0];
   const stores = listStoresAll();
   const errand = mode === 'errand';
+  // V37 MENU SPEC: registered stores show the vendor's LIVE menu (name + photo
+  // + price). The customer picks items; the price is LOCKED — no negotiation.
+  const menu = store ? (s.menu || []).filter((p) => p.storeId === store.id && p.available) : [];
+  const menuTotal = menu.reduce((a, p) => a + p.price * (sel[p.id] || 0), 0);
   // V31 ORDER SPEC: delivery fee by zone + straight-line distance (same rule as rides).
   const suggestFee = () => {
     setFeeEst({ busy: true });
@@ -447,8 +453,8 @@ export function OrderForm({ preselectStore, onClose, onPlaced }) {
     setBusy(true);
     const dropoff = { addr: addr.addr, lat: addr.lat, lng: addr.lng };
     const ok = errand
-      ? await placeErrand({ text: text.trim(), hint: hint.trim(), budget: Number(budget) || null, fee: f, payVia: pay, dropoff })
-      : await placeOrder({ text: text.trim(), fee: f, payVia: pay, storeId: store.id, dropoff });
+      ? await placeErrand({ text: text.trim(), hint: hint.trim(), budget: Number(budget) || null, fee: f, payVia: pay, dropoff, storeLink })
+      : await placeMenuOrder({ store, items: menu.filter((p) => (sel[p.id] || 0) > 0).map((p) => ({ id: p.id, name: p.name, price: p.price, qty: sel[p.id] })), fee: f, payVia: pay, dropoff });
     setBusy(false);
     if (ok) { if (onPlaced) onPlaced(); onClose(); }
   };
@@ -458,37 +464,73 @@ export function OrderForm({ preselectStore, onClose, onPlaced }) {
       <View style={{ backgroundColor: C.greenDk, padding: 18, paddingTop: 12, borderBottomLeftRadius: 24, borderBottomRightRadius: 24 }}>
         <Pressable onPress={onClose}><Txt c="#fff" s={22}>✕</Txt></Pressable>
         <Txt b s={20} c="#fff" style={{ marginTop: 8 }}>{errand ? '🧭 Buy it for me' : '🛍 ' + (store ? store.name : 'Order from a store')}</Txt>
-        <Txt s={12} c="#fff" style={{ opacity: 0.9 }}>{errand ? 'A courier buys it at any shop, shows you the item and price, and only buys after you approve.' : 'A registered store quotes you, then a courier delivers.'}</Txt>
+        <Txt s={12} c="#fff" style={{ opacity: 0.9 }}>{errand ? 'A shopper (driver) buys it at the shop you link, shows you the item and price, and only buys after you approve.' : 'Pick from the store\'s live menu — the prices are final, and a courier delivers your order.'}</Txt>
       </View>
       <View style={{ padding: 16 }}>
         <View style={{ flexDirection: 'row', marginBottom: 6 }}>
-          <Pressable onPress={() => setMode('errand')} style={chip(errand)}><Txt s={13} b={errand}>🧭 Any shop — courier buys it</Txt></Pressable>
-          <Pressable onPress={() => setMode('store')} style={chip(!errand)}><Txt s={13} b={!errand}>🏪 A registered store</Txt></Pressable>
+          <Pressable onPress={() => setMode('errand')} style={chip(errand)}><Txt s={13} b={errand}>🧭 Any shop — shopper buys it</Txt></Pressable>
+          <Pressable onPress={() => setMode('store')} style={chip(!errand)}><Txt s={13} b={!errand}>🏪 A registered store (menu)</Txt></Pressable>
         </View>
 
-        {!errand && (
+        {!errand && (<>
           <Section title="1 · Store">
-            {stores.length === 0 && <Card><Txt s={13} c={C.mute}>No store is open in the app yet. Use "Any shop — courier buys it", or wait for stores to register.</Txt></Card>}
+            {stores.length === 0 && <Card><Txt s={13} c={C.mute}>No registered store is open yet. Use "Any shop — shopper buys it", or wait for stores to register.</Txt></Card>}
             <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
               {stores.map((x) => (
-                <Pressable key={x.id} onPress={() => setStore(x)} style={chip(store && store.id === x.id)}>
+                <Pressable key={x.id} onPress={() => { setStore(x); setSel({}); }} style={chip(store && store.id === x.id)}>
                   <Txt s={13} b={store && store.id === x.id}>{CATEGORY_ICONS[x.category] || '🏪'} {x.name}</Txt>
                 </Pressable>
               ))}
             </View>
             {store && <Txt s={11} c={C.mute}>📍 {store.address || store.area}</Txt>}
           </Section>
-        )}
+          <Section title={store ? '2 · ' + store.name + ' — menu (final prices)' : '2 · Menu'}>
+            {!store || menu.length === 0 ? (
+              <Card><Txt s={13} c={C.mute}>{store ? 'This store has no products on its menu yet.' : 'Choose a store to see its menu.'}</Txt></Card>
+            ) : (
+              <View>
+                {menu.map((p) => (
+                  <Card key={p.id} style={{ marginBottom: 8, paddingVertical: 10 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      {p.image
+                        ? <Image source={{ uri: p.image }} style={{ width: 52, height: 52, borderRadius: 12, marginRight: 10 }} />
+                        : <View style={{ width: 52, height: 52, borderRadius: 12, marginRight: 10, backgroundColor: '#EAF3EF', alignItems: 'center', justifyContent: 'center' }}><Txt s={22}>🍽</Txt></View>}
+                      <View style={{ flex: 1 }}>
+                        <Txt b s={14}>{p.name}</Txt>
+                        <Txt b s={13} c={C.green}>{peso(p.price)}</Txt>
+                      </View>
+                      <Pressable onPress={() => setSel({ ...sel, [p.id]: Math.max(0, (sel[p.id] || 0) - 1) })} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#fff', borderWidth: 1.5, borderColor: C.line, alignItems: 'center', justifyContent: 'center', marginRight: 8 }}><Txt b s={16}>−</Txt></Pressable>
+                      <Txt b s={15} style={{ width: 24, textAlign: 'center' }}>{sel[p.id] || 0}</Txt>
+                      <Pressable onPress={() => setSel({ ...sel, [p.id]: (sel[p.id] || 0) + 1 })} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: C.green, alignItems: 'center', justifyContent: 'center', marginLeft: 8 }}><Txt b s={16} c="#fff">＋</Txt></Pressable>
+                    </View>
+                  </Card>
+                ))}
+                <Card style={{ backgroundColor: '#EAF3EF' }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Txt b s={14}>Items total (final — no negotiation)</Txt>
+                    <Txt b s={14} c={C.green}>{peso(menuTotal)}</Txt>
+                  </View>
+                </Card>
+              </View>
+            )}
+          </Section>
+        </>)}
 
-        <Section title={errand ? '1 · What should the courier buy?' : '2 · What do you need?'}>
-          <Field multiline numberOfLines={4} value={text} onChangeText={setText} placeholder={T('describe')} style={{ minHeight: 100, textAlignVertical: 'top' }} />
+        <Section title={errand ? '1 · What should the shopper buy?' : '3 · Notes (optional)'}>
+          <Field multiline numberOfLines={4} value={text} onChangeText={setText} placeholder={errand ? T('describe') : 'Any notes for the courier (optional)'} style={{ minHeight: 100, textAlignVertical: 'top' }} />
         </Section>
         {errand && (
-          <Section title="2 · Where? (optional)">
-            <Field value={hint} onChangeText={setHint} placeholder="Shop name or area, e.g. Mercury Drug, Brgy. Poblacion" />
+          <Section title="2 · The shop's location (required)">
+            <Field value={storeLink} onChangeText={setStoreLink} placeholder="Paste the Google Maps link — Maps → Share → Copy link" autoCapitalize="none" />
+            {storeLink && !/^(https:\/\/)?(maps\.app\.goo\.gl|www\.google\.com\/maps|google\/maps)/i.test(storeLink.trim()) && (
+              <Txt s={12} c={C.bad} style={{ marginTop: 6 }}>The link must be a Google Maps link (maps.app.goo.gl or google.com/maps).</Txt>
+            )}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
+              <Field value={hint} onChangeText={setHint} placeholder="Shop name or area (optional)" style={{ flex: 1 }} />
+            </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
               <Field value={budget} onChangeText={(v) => setBudget(v.replace(/[^0-9]/g, ''))} keyboardType="number-pad" placeholder="Budget ₱ (optional)" style={{ width: 170 }} />
-              <Txt s={11} c={C.mute} style={{ marginLeft: 10, flex: 1 }}>The courier sees it; you still approve the real price first.</Txt>
+              <Txt s={11} c={C.mute} style={{ marginLeft: 10, flex: 1 }}>The shopper sees it; you still approve the real price first.</Txt>
             </View>
           </Section>
         )}
@@ -508,7 +550,7 @@ export function OrderForm({ preselectStore, onClose, onPlaced }) {
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Field value={fee} onChangeText={(v) => setFee(v.replace(/[^0-9]/g, ''))} keyboardType="number-pad" style={{ width: 110, textAlign: 'center', fontSize: 22, fontWeight: '800' }} />
-            <Txt s={13} c={C.mute} style={{ marginLeft: 12, flex: 1 }}>the courier can accept or counter, and you decide{errand ? '. The items are paid on top, at the approved price.' : ''}</Txt>
+            <Txt s={13} c={C.mute} style={{ marginLeft: 12, flex: 1 }}>{errand ? 'the shopper can accept or counter, and you decide. The items are paid on top, at the approved price.' : 'delivery fee only — the items are paid at the menu prices (final).'}</Txt>
           </View>
         </Section>
         <Section title="Pay with">
@@ -517,8 +559,8 @@ export function OrderForm({ preselectStore, onClose, onPlaced }) {
             <Pressable onPress={() => setPay('wallet')} style={chip(pay === 'wallet')}><Txt s={13} b={pay === 'wallet'}>👛 Wallet ({peso(s.wallet.balance)})</Txt></Pressable>
           </View>
         </Section>
-        <Btn title={(errand ? '🧭 Send request' : T('placeOrder')) + ' · ' + peso(f)} busy={busy}
-             disabled={(!errand && !store) || !addr || !text.trim() || f <= 0} onPress={place} />
+        <Btn title={(errand ? '🧭 Send request' : '🛍 Place menu order') + (errand ? ' · ' + peso(f) : menuTotal > 0 ? ' · ' + peso(f + menuTotal) : '')} busy={busy}
+             disabled={(!errand && (!store || menuTotal <= 0)) || !addr || (errand && (!text.trim() || !/^(https:\/\/)?(maps\.app\.goo\.gl|www\.google\.com\/maps|google\/maps)/i.test(storeLink.trim()))) || f <= 0} onPress={place} />
         <View style={{ height: 100 }} />
       </View>
     </ScrollView>

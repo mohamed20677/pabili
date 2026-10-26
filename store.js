@@ -23,7 +23,7 @@ const DEFAULTS = () => ({
   wallet: { balance: 0, credit: 0, tx: [], withdrawals: [] },
   cart: { items: [], shipping_fee: 25 },
   catalog: [],
-  orders: [], alerts: [], audit: [], users: [], stores: [], kyc: [], intercity: [], intercityNote: null, hotels: [], hotelBookings: [], myStore: null, frozen: false, net: 'ok',
+  orders: [], alerts: [], audit: [], users: [], stores: [], kyc: [], intercity: [], intercityNote: null, hotels: [], hotelBookings: [], menu: [], myStore: null, frozen: false, net: 'ok',
   driverLocations: {}, driverOnline: false,
   settings: {
     commissions: { customerPct: 3, vendorPct: 8, driverPct: 10 },
@@ -134,6 +134,7 @@ export function StoreProvider({ children }) {
           patch.frozen = !!p.is_frozen; patch.myVehicle = C.vehicleLabel(p);
         }
         try { patch.hotels = await C.fetchHotels(); patch.hotelBookings = await C.fetchHotelBookingsAll(me); } catch (e) { /* hotels table not set up yet */ }
+        try { patch.menu = await C.fetchMenuAll(); } catch (e) { /* products table not set up yet (migration 9) */ }
       }
       // V36: intercity open trips on EVERY tick (one cheap query) and a VISIBLE
       // note on failure — the tab must never be a blind empty list again.
@@ -314,8 +315,20 @@ export function StoreProvider({ children }) {
     placeErrand: (d) => run('Errand', async () => {
       guardFrozen();
       const cur = sRef.current;
-      return C.placeErrandCloud({ me: me(), myName: cur.profile.name, text: d.text, hint: d.hint, budget: d.budget, fee: d.fee, payVia: d.payVia || 'cash', dropoff: d.dropoff });
+      return C.placeErrandCloud({ me: me(), myName: cur.profile.name, text: d.text, hint: d.hint, budget: d.budget, fee: d.fee, payVia: d.payVia || 'cash', dropoff: d.dropoff, storeLink: d.storeLink });
     }),
+    placeMenuOrder: (d) => run('Order', async () => {
+      guardFrozen();
+      const cur = sRef.current;
+      return C.placeMenuOrderCloud({ me: me(), myName: cur.profile.name, ...d });
+    }),
+    vendorMenuAdd: (d) => run('Menu', async () => {
+      const store = sRef.current.myStore;
+      return C.addMenuProductCloud(store, d);
+    }),
+    vendorMenuPrice: (p, price) => run('Menu', () => C.updateMenuProductCloud(p, { price: Number(price) || 0 })),
+    vendorMenuToggle: (p) => run('Menu', () => C.updateMenuProductCloud(p, { available: !p.available })),
+    vendorMenuDel: (p) => run('Menu', () => C.delMenuProductCloud(p)),
     shopperQuote: (o0, price, photo) => run('Price', () => C.shopperQuote(ord(o0), me(), price, photo)),
     shopperRespond: (o0, action, amount) => run('Price', () => C.shopperRespond(ord(o0), me(), action, amount, sRef.current.settings)),
     placeRide: (d) => run('Ride request', async () => {

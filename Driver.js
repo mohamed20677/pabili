@@ -116,6 +116,7 @@ export default function Driver() {
               <Txt s={11} c={C.mute}>{o.customer} · customer offers {peso(o.neg.amount)} · {o.payVia === 'wallet' ? '👛 wallet' : '💵 cash'}</Txt>
               <Txt s={11} c={C.mute} style={{ marginTop: 2 }}>{ride ? '📍 ' : '🏪 '}{o.pickup}{!errand && toPickup != null ? ' · ' + fmtKm(toPickup) + ' from you' : ''}</Txt>
               <Txt s={11} c={C.mute}>{ride ? '🏁 ' : '🏠 '}{o.dropoff}{errand && toPickup != null ? ' · ' + fmtKm(toPickup) + ' from you' : ''}{trip != null ? ' · trip ' + fmtKm(trip) : ''}</Txt>
+              {errand && o.storeLink ? <Btn small kind="ghost" title="🗺 Open the shop in Google Maps" onPress={() => Linking.openURL(o.storeLink).catch(() => {})} style={{ marginTop: 6 }} /> : null}
               {ride && o.items && o.items !== 'Passenger ride' ? <Txt s={11} c={C.mute}>📝 {o.items}</Txt> : null}
               {o.offerDeadline ? <Remaining until={o.offerDeadline} total={s.settings.offerSecs} /> : null}
               <View style={{ flexDirection: 'row', marginTop: 8 }}>
@@ -154,6 +155,7 @@ export default function Driver() {
               <Txt s={11} c={C.mute}>{statusText(o)} · fare {peso(o.fee)}</Txt>
               <Txt s={11} c={C.mute} style={{ marginTop: 2 }}>{ride ? '📍 ' : '🏪 '}{o.pickup}{toStore != null ? ' · ' + fmtKm(toStore) + ' from you' : ''}</Txt>
               <Txt s={11} c={C.mute}>{ride ? '🏁 ' : '🏠 '}{o.dropoff}</Txt>
+              {errand && o.storeLink ? <Btn small kind="ghost" title="🗺 Open the shop in Google Maps" onPress={() => Linking.openURL(o.storeLink).catch(() => {})} style={{ marginTop: 6 }} /> : null}
               <Txt s={12} b c={C.green} style={{ marginTop: 4 }}>
                 {o.payVia === 'wallet' ? '👛 Paid through the wallet — nothing to collect.'
                   : ride ? '💵 Collect ' + peso(o.fee) + ' cash from the passenger.'

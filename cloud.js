@@ -51,6 +51,7 @@ export function mapOrder(r, me) {
   } : null;
   return {
     id: r.id, kind, mine, myRole, myRoles, category: r.category, items: r.items,
+    type: r.type || 'shopper', storeLink: r.store_link || null,  // V37: menu vs shopper flow
     pickup: r.pickup_addr, dropoff: r.dropoff_addr,
     pickupLat: num(r.pickup_lat), pickupLng: num(r.pickup_lng), dropLat: num(r.dropoff_lat), dropLng: num(r.dropoff_lng),
     fee: Number(r.fee || 0), price: Number(r.price || 0), status: ui,
@@ -166,7 +167,7 @@ export async function fetchWalletTx(me) {
   return (data || []).map((t) => ({ id: t.id, amount: Number(t.amount), kind: t.kind, orderId: t.order_id, reason: t.reason, ts: ms(t.ts) }));
 }
 const mapStore = (x) => ({ id: x.id, ownerPhone: x.owner_phone, name: x.name, category: x.category, area: x.area, address: x.address,
-  lat: num(x.lat), lng: num(x.lng), rating: Number(x.rating || 0), active: !!x.active, open: !!x.open, featured: !!x.featured, createdAt: ms(x.created_at) });
+  lat: num(x.lat), lng: num(x.lng), rating: Number(x.rating || 0), active: !!x.active, open: !!x.open, featured: !!x.featured, isRegistered: x.is_registered !== false, createdAt: ms(x.created_at) });
 export async function fetchStores() {
   const { data } = await supabase.from('stores').select('*').order('created_at', { ascending: false });
   return (data || []).map(mapStore);
@@ -195,25 +196,82 @@ export async function fetchBroadcasts() {
 
 // ---------------------------------------------------------------- store orders
 export async function placeOrderCloud({ me, myName, store, text, fee, payVia, dropoff, settings }) {
-  // V21 live-DB: kind must be 'buy', customer_id + request are NOT NULL,
-  // initial UI state vendor_quote rides in negotiation.ui (status stays
-  // finding_driver, which is the only allowed pre-pickup status).
-  // V31 ORDER SPEC: the store quote window is a HARD deadline (vendorSecs).
+  // V37 MENU SPEC (cart path): registered-store orders are MENU orders — the
+  // price is locked, the order starts at finding_driver directly. No vendor_quote
+  // window, no negotiation, ever (same guarantee as placeMenuOrderCloud).
   const uid = await ensureUid(me, myName);
-  const vSecs = (settings && settings.vendorSecs) || 60;
   const { data, error } = await supabase.from('orders').insert({
-    kind: 'buy', customer_id: uid, request: text,
+    kind: 'buy', type: 'menu', customer_id: uid, request: text,
     customer_phone: me, customer_name: myName, vendor_phone: store.ownerPhone, store_id: store.id,
     store_name: store.name, category: store.category, items: text,
     pickup_addr: store.address || store.name, pickup_lat: store.lat, pickup_lng: store.lng,
     dropoff_addr: dropoff.addr, dropoff_lat: dropoff.lat || null, dropoff_lng: dropoff.lng || null,
-    fee, price: 0, status: 'finding_driver', awaiting: 'vendor', pay_via: payVia, photos: {}, declined: [],
-    offer_deadline: plusSecs(vSecs),
-    negotiation: { ui: 'vendor_quote' }, updated_at: nowIso(),  // V27: legacy table has no default
+    fee, price: 0, status: 'finding_driver', awaiting: 'driver', pay_via: payVia, photos: {}, declined: [],
+    negotiation: { ui: 'finding_driver' }, updated_at: nowIso(),  // V27: legacy table has no default
   }).select().single();
   if (error) throw error;
   return data;
 }
+// ---------------------------------------------------------------- V37: vendor menu (registered stores)
+// The vendor's LIVE menu on the server: name + photo + price + available.
+// Customers order straight from it — the price is LOCKED, menu orders skip
+// the quote/negotiation stages entirely (see placeMenuOrderCloud).
+export function mapProduct(p) {
+  return { id: p.id, storeId: p.store_id, name: p.name, image: p.image_url || null,
+    price: Number(p.price || 0), available: p.available !== false, createdAt: ms(p.created_at) };
+}
+export async function fetchMenuAll() {
+  try {
+    const { data, error } = await supabase.from('products').select('*').order('created_at', { ascending: false }).limit(300);
+    if (error) throw error;
+    return (data || []).map(mapProduct);
+  } catch (e) {
+    if (/PGRST205|Could not find the table/i.test(String((e && e.message) || e))) return []; // migration 9 not run yet
+    throw e;
+  }
+}
+export async function addMenuProductCloud(store, { name, price, image }) {
+  if (!store || !store.id) throw new Error('Register your store first (My Page → Register my store).');
+  if (!name || !String(name).trim()) throw new Error('Give the product a name.');
+  const { data, error } = await supabase.from('products').insert({
+    store_id: store.id, name: String(name).trim(), price: Number(price) || 0, image_url: image || null, available: true,
+  }).select().single();
+  if (error) throw error;
+  return data;
+}
+export async function updateMenuProductCloud(p, patch) {
+  const { data, error } = await supabase.from('products').update({ ...patch, updated_at: nowIso() }).eq('id', p.id).select();
+  if (error) throw error;
+  if (!data || !data.length) throw new Error('This product was just deleted. Refreshed.');
+  return data[0];
+}
+export async function delMenuProductCloud(p) {
+  const { error } = await supabase.from('products').delete().eq('id', p.id);
+  if (error) throw error;
+}
+export async function placeMenuOrderCloud({ me, myName, store, items, fee, payVia, dropoff }) {
+  // V37 MENU SPEC: registered-store order — the price is the menu total,
+  // LOCKED. The order starts at finding_driver directly (the stage machine
+  // guards updates, not inserts) — no vendor_quote, no negotiation, ever.
+  if (!store || !store.id) throw new Error('Choose a store first.');
+  const list = (items || []).filter((x) => x.qty > 0);
+  if (!list.length) throw new Error('Pick at least one item from the menu.');
+  const uid = await ensureUid(me, myName);
+  const total = list.reduce((a, x) => a + Number(x.price) * Number(x.qty), 0);
+  const summary = list.map((x) => x.qty + '× ' + x.name).join(', ');
+  const { data, error } = await supabase.from('orders').insert({
+    kind: 'buy', type: 'menu', customer_id: uid, request: summary,
+    customer_phone: me, customer_name: myName, vendor_phone: store.ownerPhone, store_id: store.id,
+    store_name: store.name, category: store.category, items: summary,
+    pickup_addr: store.address || store.name, pickup_lat: store.lat, pickup_lng: store.lng,
+    dropoff_addr: dropoff.addr, dropoff_lat: dropoff.lat || null, dropoff_lng: dropoff.lng || null,
+    fee, price: total, status: 'finding_driver', awaiting: 'driver', pay_via: payVia, photos: {}, declined: [],
+    negotiation: { ui: 'finding_driver' }, updated_at: nowIso(),
+  }).select().single();
+  if (error) throw error;
+  return data;
+}
+
 export const vendorQuote = (o, price, photo) => guarded(o.id, ['vendor_quote'], {
   price, photos: { ...o.photos, product: photo }, status: 'quote_review', awaiting: 'customer',
   negotiation: mkNeg('vendor', 'customer', price, 'vendor', 'Store quote + product photo', null),
@@ -257,17 +315,26 @@ export const driverDeliver = (o, me, photo) => guarded(o.id, ['picked_up'], { st
 // ---------------------------------------------------------------- errands: a courier buys it at ANY shop
 // customer asks → courier accepts the delivery fee → courier sends the item photo + price → customer approves
 // (or counters) BEFORE anything is bought → courier buys, photographs, delivers.
-export async function placeErrandCloud({ me, myName, text, hint, budget, fee, payVia, dropoff }) {
+export async function placeErrandCloud({ me, myName, text, hint, budget, fee, payVia, dropoff, storeLink }) {
+  // V37 SHOPPER SPEC: the unregistered shop's Google Maps link is MANDATORY —
+  // no request is sent without a valid Maps link, so the shopper navigates
+  // straight to the shop.
+  const link = String(storeLink || '').trim();
+  if (!link) throw new Error("Add the shop's Google Maps link so the shopper can find it (Maps → Share → Copy link).");
+  if (!/^(https:\/\/)?(maps\.app\.goo\.gl|www\.google\.com\/maps|google\/maps)/i.test(link)) {
+    throw new Error('The store link must be a Google Maps link (maps.app.goo.gl or google.com/maps).');
+  }
   // V21 live-DB: kind 'buy' + customer_id + request (NOT NULL), UI kind
   // reconstructed from category 'Errand'.
   const uid = await ensureUid(me, myName);
   const { data, error } = await supabase.from('orders').insert({
-    kind: 'buy', customer_id: uid, request: text,
+    kind: 'buy', type: 'shopper', customer_id: uid, request: text,
     category: 'Errand', customer_phone: me, customer_name: myName, items: text,
     pickup_addr: hint || 'Any shop near you — the courier chooses',
     pickup_lat: dropoff.lat || null, pickup_lng: dropoff.lng || null,   // ranks couriers by distance to the customer
     dropoff_addr: dropoff.addr, dropoff_lat: dropoff.lat || null, dropoff_lng: dropoff.lng || null,
     fee, price: 0, budget: budget || null, status: 'finding_driver', pay_via: payVia, photos: {}, declined: [],
+    store_link: link,
     negotiation: { ui: 'finding_driver' }, updated_at: nowIso(),  // V27
   }).select().single();
   if (error) throw error;
