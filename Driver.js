@@ -118,7 +118,9 @@ export default function Driver() {
               <Txt s={11} c={C.mute}>{ride ? '🏁 ' : '🏠 '}{o.dropoff}{errand && toPickup != null ? ' · ' + fmtKm(toPickup) + ' from you' : ''}{trip != null ? ' · trip ' + fmtKm(trip) : ''}</Txt>
               {errand && o.storeLink ? <Btn small kind="ghost" title="🗺 Open the shop in Google Maps" onPress={() => Linking.openURL(o.storeLink).catch(() => {})} style={{ marginTop: 6 }} /> : null}
               {ride && o.items && o.items !== 'Passenger ride' ? <Txt s={11} c={C.mute}>📝 {o.items}</Txt> : null}
-              {o.offerDeadline ? <Remaining until={o.offerDeadline} total={s.settings.offerSecs} /> : null}
+              {o.offerDeadline ? (Date.now() > o.offerDeadline
+                ? <Txt s={11} c={C.amber}>⏳ انتهت مهلة العرض — اضغط قبول لإعادة تأكيده (يبقى لك ما لم ياخذه سائق تاني)</Txt>
+                : <Remaining until={o.offerDeadline} total={s.settings.offerSecs} />) : null}
               <View style={{ flexDirection: 'row', marginTop: 8 }}>
                 <Btn small busy={busy === 'a' + o.id} title={'✓ Accept ' + peso(o.neg.amount)}
                      onPress={async () => { setBusy('a' + o.id); await driverOfferAnswer(o, 'accept'); setBusy(null); }} style={{ flex: 1, marginRight: 6 }} />

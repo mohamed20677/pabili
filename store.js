@@ -229,25 +229,52 @@ export function StoreProvider({ children }) {
 
     // ---- cart draft (local) — placing it creates one order per store ----
     addToCart: (e) => setS((c) => ({ ...c, cart: { ...c.cart, items: [...(c.cart.items || []).filter((x) => x.storeId !== e.storeId), { storeId: e.storeId, storeName: e.storeName, description: e.description || '', fees: e.fees || 0 }] } })),
+    // ---- V40 CART: grouped by store — ONE checkout per store group ----
+    addToCart: (g) => setS((c) => {
+      const items = ((c.cart && c.cart.items) || []).slice();
+      const i = items.findIndex((x) => x.storeId === g.storeId);
+      if (i >= 0) {
+        const merged = { ...items[i], items: [...(items[i].items || [])] };
+        (g.items || []).forEach((p) => {
+          const j = merged.items.findIndex((x) => x.id === p.id);
+          if (j >= 0) merged.items[j] = { ...merged.items[j], qty: (merged.items[j].qty || 0) + (p.qty || 0) };
+          else merged.items.push({ ...p });
+        });
+        items[i] = merged;
+      } else items.push({ storeId: g.storeId, storeName: g.storeName, items: (g.items || []).map((p) => ({ ...p })), addedAt: now() });
+      return { ...c, cart: { ...c.cart, items } };
+    }),
+    bumpCartQty: (storeId, productId, delta) => setS((c) => {
+      const items = ((c.cart && c.cart.items) || []).map((g) => {
+        if (g.storeId !== storeId) return g;
+        const its = (g.items || []).map((p) => (p.id === productId ? { ...p, qty: Math.max(0, (p.qty || 0) + delta) } : p)).filter((p) => (p.qty || 0) > 0);
+        return { ...g, items: its };
+      }).filter((g) => (g.items || []).length > 0);
+      return { ...c, cart: { ...c.cart, items } };
+    }),
     removeFromCart: (id) => setS((c) => ({ ...c, cart: { ...c.cart, items: (c.cart.items || []).filter((x) => x.storeId !== id) } })),
     clearCart: () => setS((c) => ({ ...c, cart: { items: [], shipping_fee: 25 } })),
     cartTotals: () => {
-      const items = (sRef.current && sRef.current.cart && sRef.current.cart.items) || [];
-      const itemsFee = items.reduce((a, x) => a + (x.fees || 0), 0);
-      const shipping = items.length ? 25 + (items.length - 1) * 8 : 25;
-      return { items: items.length, itemsFee, shipping, total: itemsFee + shipping };
+      const groups = (sRef.current && sRef.current.cart && sRef.current.cart.items) || [];
+      const itemsFee = groups.reduce((a, g) => a + (g.items || []).reduce((b, x) => b + (Number(x.price) || 0) * (x.qty || 0), 0), 0);
+      const shipping = groups.length * 25;
+      return { items: groups.length, itemsFee, shipping, total: itemsFee + shipping };
     },
-    placeCartOrder: (_u, payVia) => run('Cart', async () => {
-      const cur = sRef.current; const items = cur.cart.items || []; if (!items.length) return null;
+    placeCartOrder: (storeId, payVia) => run('Cart', async () => {
+      // V40 CART SPEC: ONE confirmed order per store group — the menu prices are
+      // final and the order starts at finding_driver directly (no negotiation).
+      // Only THIS store's group is cleared; other stores stay in the cart.
+      // Cancellation stays per-order with the V39 race-proof logic.
+      const cur = sRef.current;
+      const g = ((cur.cart && cur.cart.items) || []).find((x) => x.storeId === storeId);
+      if (!g || !(g.items || []).length) return null;
       const addr = (cur.addresses || []).find((a) => a.default) || (cur.addresses || [])[0];
       if (!addr) throw new Error('Add a delivery address first.');
       guardFrozen();
-      const fee = Math.max(10, Math.round(api.cartTotals().shipping / items.length));
-      for (const it of items) {
-        const store = cur.stores.find((x) => x.id === it.storeId); if (!store) continue;
-        await C.placeOrderCloud({ me: me(), myName: cur.profile.name, store, text: it.description || 'Order from ' + it.storeName, fee, payVia: payVia || 'cash', dropoff: addr });
-      }
-      setS((c) => ({ ...c, cart: { items: [], shipping_fee: 25 } }));
+      const store = (cur.stores || []).find((x) => x.id === storeId)
+        || { id: g.storeId, ownerPhone: null, name: g.storeName, category: 'Store', address: null, lat: null, lng: null };
+      await C.placeMenuOrderCloud({ me: me(), myName: cur.profile.name, store, items: g.items, fee: 25, payVia: payVia || 'cash', dropoff: addr });
+      setS((c) => ({ ...c, cart: { ...c.cart, items: (c.cart.items || []).filter((x) => x.storeId !== storeId) } }));
     }),
 
     // ---- stores ----

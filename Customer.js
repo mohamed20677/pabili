@@ -120,49 +120,78 @@ export function NegotiationBox({ title, amount, note, onAccept, onCounter, onRef
 }
 
 // V9: cart view + add to cart workflow.
-export function CartScreen({ onClose, onPlace }) {
-  const { s, removeFromCart, cartTotals, clearCart } = useStore();
+// V40 CART: items grouped by store — each group confirms SEPARATELY (one order
+// per store, menu prices final, no negotiation). The cart persists across
+// navigation (AsyncStorage) and only the checked-out store's group is cleared.
+// Cancellation stays per-order via the V39 race-proof cancelOrderCloud.
+const chipS = (on) => ({ borderWidth: 1.5, borderColor: on ? C.green : C.line, borderRadius: 14, paddingVertical: 8, paddingHorizontal: 10, marginRight: 8, backgroundColor: on ? '#EAF3EF' : '#fff', alignItems: 'center' });
+
+export function CartScreen({ onClose, onPlaced }) {
+  const { s, removeFromCart, bumpCartQty, cartTotals, clearCart, placeCartOrder } = useStore();
+  const groups = (s.cart && s.cart.items) || [];
   const t = cartTotals();
-  const items = s.cart?.items || [];
+  const [pay, setPay] = useState({});
+  const [busy, setBusy] = useState(null);
+  const addr = (s.addresses || []).find((a) => a.default) || (s.addresses || [])[0];
+  const groupTotal = (g) => (g.items || []).reduce((a, x) => a + (Number(x.price) || 0) * (x.qty || 0), 0);
+  const confirm = async (g) => {
+    setBusy(g.storeId);
+    const ok = await placeCartOrder(g.storeId, pay[g.storeId] || 'cash');
+    setBusy(null);
+    if (ok && onPlaced) onPlaced();
+  };
   return (
     <View style={{ flex: 1, backgroundColor: C.paper }}>
       <View style={{ backgroundColor: C.greenDk, padding: 18, borderBottomLeftRadius: 24, borderBottomRightRadius: 24 }}>
-        <Pressable onPress={onClose}><Txt c="#fff" s={20}>‹ Back</Txt></Pressable>
-        <Txt b s={20} c="#fff" style={{ marginTop: 8 }}>🛒 Cart ({items.length} store{items.length === 1 ? '' : 's'})</Txt>
-        <Txt s={12} c="#fff" style={{ opacity: 0.85 }}>One courier picks up all items; per-store prices stay separate.</Txt>
+        <Pressable onPress={onClose}><Txt c="#fff" s={20}>‹</Txt></Pressable>
+        <Txt b s={20} c="#fff" style={{ marginTop: 8 }}>🛒 السلة ({groups.length} متجر)</Txt>
+        <Txt s={12} c="#fff" style={{ opacity: 0.85 }}>كل متجر له تأكيد منفصل — أسعار المنيو نهائية ومفيش تفاوض.</Txt>
       </View>
       <ScrollView style={{ flex: 1, padding: 14 }}>
-        {items.length === 0 && <Card style={{ paddingVertical: 30, alignItems: 'center' }}>
+        {groups.length === 0 && <Card style={{ paddingVertical: 30, alignItems: 'center' }}>
           <Txt s={40}>🛍️</Txt>
-          <Txt b s={16} style={{ marginTop: 4 }}>Cart is empty</Txt>
-          <Txt s={12} c={C.mute} style={{ marginTop: 4 }}>Pick a store from the list and tap "Add to cart" to combine orders.</Txt>
+          <Txt b s={16} style={{ marginTop: 4 }}>السلة فاضية</Txt>
+          <Txt s={12} c={C.mute} style={{ marginTop: 4 }}>اختار متجر من القايمة واضغط "🛒 Add to cart" — التأكيد بيتم من هنا لكل متجر على حدي.</Txt>
         </Card>}
-        {items.map((it) => (
-          <Card key={it.storeId} style={{ marginBottom: 10 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <View style={{ width: 50, height: 50, borderRadius: 14, backgroundColor: '#EAF3EF', alignItems: 'center', justifyContent: 'center' }}>
-                <Txt s={22}>{CATEGORY_ICONS[(s.stores || []).find((x) => x.id === it.storeId)?.category] || '🏪'}</Txt>
+        {groups.map((g) => {
+          const gt = groupTotal(g);
+          const st = (s.stores || []).find((x) => x.id === g.storeId);
+          return (
+            <Card key={g.storeId} style={{ marginBottom: 12, borderColor: C.green, borderWidth: 1.5 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <View style={{ width: 46, height: 46, borderRadius: 14, backgroundColor: '#EAF3EF', alignItems: 'center', justifyContent: 'center' }}>
+                  <Txt s={20}>{CATEGORY_ICONS[st && st.category] || '🏪'}</Txt>
+                </View>
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Txt b s={15}>{g.storeName}</Txt>
+                  <Txt s={11} c={C.mute}>{(g.items || []).length} صنف · توصيل ₱25</Txt>
+                </View>
+                <Txt b c={C.green}>{peso(gt + 25)}</Txt>
               </View>
-              <View style={{ flex: 1, marginLeft: 10 }}>
-                <Txt b s={14}>{it.storeName}</Txt>
-                <Txt s={11} c={C.mute}>{it.description || '—'}</Txt>
+              {(g.items || []).map((x) => (
+                <View key={x.id} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
+                  <Txt s={13} style={{ flex: 1 }}>{x.qty}× {x.name}</Txt>
+                  <Txt b s={13} c={C.green}>{peso((Number(x.price) || 0) * (x.qty || 0))}</Txt>
+                  <Pressable onPress={() => bumpCartQty(g.storeId, x.id, -1)} style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#fff', borderWidth: 1.2, borderColor: C.line, alignItems: 'center', justifyContent: 'center', marginLeft: 10 }}><Txt b s={14}>−</Txt></Pressable>
+                  <Pressable onPress={() => bumpCartQty(g.storeId, x.id, 1)} style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: C.green, alignItems: 'center', justifyContent: 'center', marginLeft: 6 }}><Txt b s={14} c="#fff">＋</Txt></Pressable>
+                </View>
+              ))}
+              <View style={{ flexDirection: 'row', marginTop: 10 }}>
+                <Pressable onPress={() => setPay({ ...pay, [g.storeId]: 'cash' })} style={[chipS(pay[g.storeId] !== 'wallet'), { flex: 1 }]}><Txt s={12} b={pay[g.storeId] !== 'wallet'}>💵 كاش عند التسليم</Txt></Pressable>
+                <Pressable onPress={() => setPay({ ...pay, [g.storeId]: 'wallet' })} style={[chipS(pay[g.storeId] === 'wallet'), { flex: 1 }]}><Txt s={12} b={pay[g.storeId] === 'wallet'}>👛 المحفظة ({peso(s.wallet.balance)})</Txt></Pressable>
               </View>
-              <Txt b c={C.green}>{peso(it.fees)}</Txt>
-            </View>
-            <Btn small kind="bad" title="Remove" onPress={() => removeFromCart(it.storeId)} />
-          </Card>
-        ))}
-        {items.length > 0 && (
-          <Card style={{ marginTop: 6 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><Txt>Items total</Txt><Txt b>{peso(t.itemsFee)}</Txt></View>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><Txt>Shipping ({t.items} stores)</Txt><Txt b>{peso(t.shipping)}</Txt></View>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
-              <Txt b s={15}>Total</Txt><Txt b s={17} c={C.green}>{peso(t.total)}</Txt>
-            </View>
-            <Btn title={'🛵 Place order · ' + peso(t.total)} onPress={onPlace} />
-            <Btn kind="ghost" title="Clear cart" onPress={clearCart} />
-          </Card>
-        )}
+              <Btn small title={'✅ تأكيد طلب ' + g.storeName + ' · ' + peso(gt + 25)} busy={busy === g.storeId}
+                   disabled={!addr} onPress={() => confirm(g)} style={{ marginTop: 8 }} />
+              <Btn small kind="bad" title="شيل المتجر من السلة" onPress={() => removeFromCart(g.storeId)} style={{ marginTop: 6 }} />
+            </Card>
+          );
+        })}
+        {groups.length > 1 && <Card style={{ backgroundColor: '#EAF3EF' }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><Txt b>الإجمالي ({t.items} متاجر)</Txt><Txt b c={C.green}>{peso(t.total)}</Txt></View>
+          <Txt s={11} c={C.mute} style={{ marginTop: 4 }}>كل متجر بيتأكد منفصليًا — لكل متجر طلب ومندوب مستقل.</Txt>
+        </Card>}
+        {groups.length > 0 && !addr && <Card style={{ borderColor: C.bad, borderWidth: 1.5 }}><Txt s={13} c={C.bad}>أضف عنوان توصيل الأول (صفحتي → العناوين المحفوظة).</Txt></Card>}
+        {groups.length > 0 && <Btn small kind="ghost" title="تفريغ السلة" onPress={clearCart} style={{ marginTop: 6 }} />}
         <View style={{ height: 100 }} />
       </ScrollView>
     </View>
@@ -252,7 +281,7 @@ function StageTracker({ status, kind }) {
   );
 }
 
-export function HomeScreen({ goNew, goStores, goCart, goRide, goHotels, goIntercity }) {
+export function HomeScreen({ goNew, goStores, goCart, goRide, goHotels, goIntercity, goOrders }) {
   const { s, cartTotals } = useStore();
   const T = useT();
   const [sheet, setSheet] = useState(false);
@@ -333,17 +362,27 @@ export function HomeScreen({ goNew, goStores, goCart, goRide, goHotels, goInterc
       </View>
 
       {(() => {
-        // V33 ORDER SPEC: the live order follows the agreed sequence ON THE HOME
-        // screen with the current-stage action buttons (Orders tab = history).
-        const act = (s.orders || []).filter((o) => o.mine && !['completed', 'cancelled', 'disputed'].includes(o.status))
-          .sort((a, b) => (b.created || 0) - (a.created || 0))[0];
-        if (!act) return null;
+        // V38 ORDER-BOARD SPLIT: order lists live in the Orders tab (OrdersManage)
+        // — home keeps a compact count badge + link only (the user's report:
+        // old orders piled up on the home screen).
+        const acts = (s.orders || []).filter((o) => o.mine && !['completed', 'cancelled', 'disputed'].includes(o.status));
+        const act = acts.slice().sort((a, b) => (b.created || 0) - (a.created || 0))[0];
+        if (!acts.length) return null;
+        const stage = act ? ({
+          vendor_quote: '1/5 · عند المتجر', quote_review: '2/5 · عرض المتجر', vendor_talk: '2/5 · تفاوض السعر',
+          finding_driver: '3/5 · تعيين سائق', driver_offer: '3/5 · عرض سائق', driver_talk: '3/5 · تفاوض مع السائق',
+          accepted: '3/5 · السائق في الطريق', ready_pickup: '4/5 · جاهز للاستلام',
+          picked_up: '4/5 · في الطريق إليك', delivered: '5/5 · تم التسليم',
+        }[act.status] || '') : '';
         return (
-          <View style={{ marginHorizontal: 14, marginTop: 12 }}>
-            <Txt b s={16} style={{ marginBottom: 6 }}>🔥 Your live order</Txt>
-            <StageTracker status={act.status} kind={act.kind} />
-            <OrderCard o={act} />
-          </View>
+          <Pressable onPress={goOrders} style={{ marginHorizontal: 14, marginTop: 12, backgroundColor: '#fff', borderRadius: 16, borderWidth: 1.5, borderColor: C.green, padding: 14, flexDirection: 'row', alignItems: 'center' }}>
+            <Txt s={22}>🔥</Txt>
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Txt b s={14}>{acts.length} طلب قيد التنفيذ</Txt>
+              {stage ? <Txt s={12} c={C.mute} style={{ marginTop: 2 }}>أحدث طلب: {stage}</Txt> : null}
+            </View>
+            <Txt b s={13} c={C.green}>إدارة الطلبات ›</Txt>
+          </Pressable>
         );
       })()}
 
@@ -417,7 +456,7 @@ export function HomeScreen({ goNew, goStores, goCart, goRide, goHotels, goInterc
 }
 
 export function OrderForm({ preselectStore, onClose, onPlaced }) {
-  const { s, placeErrand, placeMenuOrder, listStoresAll } = useStore();
+  const { s, placeErrand, listStoresAll, addToCart } = useStore();
   const T = useT();
   const [mode, setMode] = useState(preselectStore ? 'store' : 'errand'); // errand = a shopper buys it at ANY shop (link mandatory)
   const [text, setText] = useState('');
@@ -454,9 +493,22 @@ export function OrderForm({ preselectStore, onClose, onPlaced }) {
     const dropoff = { addr: addr.addr, lat: addr.lat, lng: addr.lng };
     const ok = errand
       ? await placeErrand({ text: text.trim(), hint: hint.trim(), budget: Number(budget) || null, fee: f, payVia: pay, dropoff, storeLink })
-      : await placeMenuOrder({ store, items: menu.filter((p) => (sel[p.id] || 0) > 0).map((p) => ({ id: p.id, name: p.name, price: p.price, qty: sel[p.id] })), fee: f, payVia: pay, dropoff });
+      : true; // V40: the menu path goes through the CART — checkout is confirmed per store in the cart screen
     setBusy(false);
     if (ok) { if (onPlaced) onPlaced(); onClose(); }
+  };
+  // V40 CART SPEC: accumulate the picked menu items into the store's cart group
+  // (merging quantities if the store is already in the cart). The order itself
+  // is CONFIRMED later from the cart — one checkout per store, final prices.
+  const storeCartQty = store ? (((s.cart || {}).items) || []).filter((it) => it.storeId === store.id)
+    .reduce((a, it) => a + (it.items || []).reduce((b, x) => b + (x.qty || 0), 0), 0) : 0;
+  const addMenuToCart = () => {
+    const picks = menu.filter((p) => (sel[p.id] || 0) > 0).map((p) => ({ id: p.id, name: p.name, price: p.price, qty: sel[p.id] }));
+    if (!picks.length || !store) return;
+    addToCart({ storeId: store.id, storeName: store.name, items: picks });
+    setSel({});
+    if (onPlaced) onPlaced();
+    onClose();
   };
   const chip = (on) => ({ borderWidth: 1.5, borderColor: on ? C.green : C.line, borderRadius: 14, paddingVertical: 9, paddingHorizontal: 12, marginRight: 8, marginBottom: 8, backgroundColor: on ? '#EAF3EF' : '#fff' });
   return (
@@ -511,14 +563,19 @@ export function OrderForm({ preselectStore, onClose, onPlaced }) {
                     <Txt b s={14} c={C.green}>{peso(menuTotal)}</Txt>
                   </View>
                 </Card>
+                <Btn title={'🛒 Add to cart' + (menuTotal > 0 ? ' · ' + peso(menuTotal) : '')} disabled={menuTotal <= 0} onPress={addMenuToCart} style={{ marginTop: 8 }} />
+                {storeCartQty > 0 && <Txt s={12} c={C.mute} style={{ marginTop: 6, textAlign: 'center' }}>{storeCartQty} item(s) from this store are already in the cart — adding merges the quantities.</Txt>}
+                <Txt s={11} c={C.mute} style={{ marginTop: 6, textAlign: 'center' }}>التأكيد النهائي بيتم من السلة (الرئيسية → 🛒) — لكل متجر عملية تأكيد منفصلة.</Txt>
               </View>
             )}
           </Section>
         </>)}
 
-        <Section title={errand ? '1 · What should the shopper buy?' : '3 · Notes (optional)'}>
-          <Field multiline numberOfLines={4} value={text} onChangeText={setText} placeholder={errand ? T('describe') : 'Any notes for the courier (optional)'} style={{ minHeight: 100, textAlignVertical: 'top' }} />
-        </Section>
+        {errand && (
+          <Section title="1 · What should the shopper buy?">
+            <Field multiline numberOfLines={4} value={text} onChangeText={setText} placeholder={T('describe')} style={{ minHeight: 100, textAlignVertical: 'top' }} />
+          </Section>
+        )}
         {errand && (
           <Section title="2 · The shop's location (required)">
             <Field value={storeLink} onChangeText={setStoreLink} placeholder="Paste the Google Maps link — Maps → Share → Copy link" autoCapitalize="none" />
@@ -534,6 +591,7 @@ export function OrderForm({ preselectStore, onClose, onPlaced }) {
             </View>
           </Section>
         )}
+        {errand && (<>
         <Section title={T('deliverTo')}>
           {addr ? (
             <Card>
@@ -559,8 +617,9 @@ export function OrderForm({ preselectStore, onClose, onPlaced }) {
             <Pressable onPress={() => setPay('wallet')} style={chip(pay === 'wallet')}><Txt s={13} b={pay === 'wallet'}>👛 Wallet ({peso(s.wallet.balance)})</Txt></Pressable>
           </View>
         </Section>
-        <Btn title={(errand ? '🧭 Send request' : '🛍 Place menu order') + (errand ? ' · ' + peso(f) : menuTotal > 0 ? ' · ' + peso(f + menuTotal) : '')} busy={busy}
-             disabled={(!errand && (!store || menuTotal <= 0)) || !addr || (errand && (!text.trim() || !/^(https:\/\/)?(maps\.app\.goo\.gl|www\.google\.com\/maps|google\/maps)/i.test(storeLink.trim()))) || f <= 0} onPress={place} />
+        </>)}
+        <Btn title={'🧭 Send request · ' + peso(f)} busy={busy}
+             disabled={!addr || !text.trim() || !/^(https:\/\/)?(maps\.app\.goo\.gl|www\.google\.com\/maps|google\/maps)/i.test(storeLink.trim()) || f <= 0} onPress={place} />
         <View style={{ height: 100 }} />
       </View>
     </ScrollView>
@@ -657,7 +716,7 @@ export function AddressesScreen({ onClose }) {
   );
 }
 
-function OrderCard({ o }) {
+export function OrderCard({ o }) {
   const { s, customerConfirm, cancelOrder, dispute, quoteAnswer, driverAnswer } = useStore();
   const ride = o.kind === 'ride';
   const errand = o.kind === 'errand';

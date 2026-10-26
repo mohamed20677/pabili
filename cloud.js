@@ -457,11 +457,64 @@ export async function customerDriverAnswer(o, action, amount, settings) {
   return guarded(o.id, ['driver_talk'], { status: 'finding_driver', offer_to: null, offer_deadline: null,
     declined: [...o.declined, o.offerTo], negotiation: null, awaiting: null });
 }
-export const driverCancel = (o, me) => guarded(o.id, o.kind === 'ride' ? ['accepted', 'ready_pickup'] : o.kind === 'errand' ? ['accepted', 'quote_review', 'vendor_talk'] : ['accepted'], {
-  ...(o.kind === 'errand' ? { price: 0 } : {}),
-  status: 'finding_driver', driver_phone: null, driver_name: null, driver_vehicle: null, offer_to: null, offer_deadline: null,
-  declined: [...o.declined, me], negotiation: null, awaiting: null }, { driver_phone: me });
-export const cancelOrderCloud = (o) => guarded(o.id, o.kind === 'ride' ? [...OPEN_FOR_CANCEL, 'accepted', 'ready_pickup'] : o.kind === 'errand' ? [...OPEN_FOR_CANCEL, 'accepted'] : OPEN_FOR_CANCEL, { status: 'cancelled', negotiation: null, awaiting: null, offer_to: null, offer_deadline: null });
+export async function driverCancel(o, me) {
+  // V39 RACE-PROOF RELEASE: the driver releasing an order (decline / can't buy
+  // it) reads the FRESH row first — an order that just moved on is a clear
+  // message, not a raw race error, and the release re-reads on a lost race.
+  const g = await supabase.from('orders').select('id,status,negotiation,driver_phone').eq('id', o.id).maybeSingle();
+  const r = g && g.data;
+  if (!r) throw new Error('This order no longer exists.');
+  const rui = (r.negotiation && r.negotiation.ui) || r.status;
+  if (['cancelled', 'completed', 'disputed'].includes(rui)) {
+    return { id: r.id, status: r.status, already: true }; // nothing to release — NOT an error
+  }
+  const released = { status: 'finding_driver', driver_phone: null, driver_name: null, driver_vehicle: null, offer_to: null, offer_deadline: null,
+    declined: [...(r.negotiation && r.negotiation.history ? [] : []), me], awaiting: null, negotiation: { ui: 'finding_driver' }, updated_at: nowIso() };
+  if (o.kind === 'errand') released.price = 0;
+  const q = await supabase.from('orders').update(released).eq('id', o.id).eq('driver_phone', me).select();
+  if (q.error) throw q.error;
+  if (!q.data || !q.data.length) {
+    // pre-pickup offers/quotes ride in negotiation.ui — release by id + stage
+    const q2 = await supabase.from('orders').update(released).eq('id', o.id)
+      .in('status', ['finding_driver']).is('driver_phone', null).select();
+    if (q2.error) throw q2.error;
+    if (!q2.data || !q2.data.length) throw new Error('This order was just updated by another party. Refreshed — please check its current status.');
+    return q2.data[0];
+  }
+  return q.data[0];
+}
+export async function cancelOrderCloud(o) {
+  // V39 RACE-PROOF CANCEL (the real cause of "Someone just updated this order"
+  // on the Cancel button): the dispatch cycle re-offers expired offers every few
+  // seconds and other phones move the order forward, so the card on screen is
+  // often STALE by the time Cancel is pressed. The cancel now reads the FRESH
+  // row first: an already-cancelled/completed order is a silent SUCCESS
+  // (idempotent — the UI just refreshes and shows Cancelled, no error dialog),
+  // a picked-up/delivered order gets a clear "too late" message, and everything
+  // else cancels with a broad match + one re-read on a lost race.
+  const g = await supabase.from('orders').select('id,status,negotiation').eq('id', o.id).maybeSingle();
+  const r = g && g.data;
+  if (!r) throw new Error('This order no longer exists.');
+  const rui = (r.negotiation && r.negotiation.ui) || r.status;
+  if (['cancelled', 'completed', 'disputed'].includes(rui)) {
+    return { id: r.id, status: 'cancelled', already: true }; // nothing to do — NOT an error
+  }
+  if (['picked_up', 'delivered'].includes(rui)) {
+    throw new Error('The order is already on its way or delivered — it can no longer be cancelled. Use Support to open a dispute.');
+  }
+  const dbPatch = { status: 'cancelled', negotiation: { ui: 'cancelled' }, awaiting: null, offer_to: null, offer_deadline: null, updated_at: nowIso() };
+  const q = await supabase.from('orders').update(dbPatch).eq('id', o.id).in('status', ['finding_driver', 'picked_up']).select();
+  if (q.error) throw q.error;
+  if (!q.data || !q.data.length) {
+    // Lost a race → re-read once: already-cancelled counts as success.
+    const g2 = await supabase.from('orders').select('id,status,negotiation').eq('id', o.id).maybeSingle();
+    const r2 = g2 && g2.data;
+    const ui2 = r2 ? ((r2.negotiation && r2.negotiation.ui) || r2.status) : null;
+    if (ui2 === 'cancelled') return { id: o.id, status: 'cancelled', already: true };
+    throw new Error('This order was just updated by another party. Refreshed — please check its current status.');
+  }
+  return q.data[0];
+}
 export const disputeOrder = (o) => guarded(o.id, ['picked_up', 'delivered'], { status: 'disputed' });
 export async function confirmOrder(o) {
   // V21: settle_order may not exist on the live DB — fall back to a direct
@@ -596,7 +649,9 @@ export async function dispatchTick(settings) {
     // rows), so the old `.eq('updated_at', r.updated_at)` optimistic lock
     // matched NOTHING and dispatch silently never assigned. Match on id —
     // beta-safe; the status/offer flow keeps its own guards.
-    const { data } = await supabase.from('orders').update({ ...patch, updated_at: nowIso() }).eq('id', r.id).select();
+    // V39: status guard — dispatch must NEVER revive or overwrite an order that
+    // was just cancelled or moved forward by another phone (the re-offer race).
+    const { data } = await supabase.from('orders').update({ ...patch, updated_at: nowIso() }).eq('id', r.id).eq('status', 'finding_driver').select();
     if (data && data.length) changed += 1;
   }
   return changed;

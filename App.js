@@ -12,7 +12,8 @@ import { LangCtx, C } from './lib';
 import { StoreProvider, useStore } from './store';
 import { ensureProfile, loadProfileRemote } from './api';
 import { PhoneScreen, OtpScreen, TermsScreen } from './Auth';
-import { HomeScreen, OrderForm, OrdersTab, StoresByCategory, AddressesScreen, CartScreen } from './Customer';
+import { HomeScreen, OrderForm, StoresByCategory, AddressesScreen, CartScreen } from './Customer';
+import OrdersManage from './OrdersManage';
 import Profile, { AlertsTab } from './Profile';
 import Driver from './Driver';
 import Vendor from './Vendor';
@@ -24,7 +25,7 @@ import HotelsScreen from './HotelsScreen';
 import { Txt } from './ui';
 
 function Shell() {
-  const { s, signIn, agreeTerms, placeCartOrder, setProfile } = useStore();
+  const { s, signIn, agreeTerms, setProfile } = useStore();
   const [digits, setDigits] = useState('');
   const [step, setStep] = useState('phone'); // phone | otp
   const [tab, setTab] = useState('home');
@@ -70,11 +71,11 @@ function Shell() {
 
   const role = s.activeRole;
   const main = tab === 'home'
-    ? (role === 'driver' ? <Driver /> : role === 'vendor' ? <Vendor />
+    ? (role === 'driver' ? <Driver /> : role === 'vendor' ? <Vendor goOrders={() => setTab('orders')} />
        : <HomeScreen
            goNew={(c) => { setPreselect(c); setPreselectStore(null); setNewOpen(true); }}
-           goStores={(c) => { setStoresCat(c); }} goCart={() => setCartOpen(true)} goRide={() => setRideOpen(true)} goIntercity={() => setIntercityOpen(true)} goHotels={() => setHotelOpen(true)} />)
-    : tab === 'orders' ? <OrdersTab />
+           goStores={(c) => { setStoresCat(c); }} goCart={() => setCartOpen(true)} goRide={() => setRideOpen(true)} goIntercity={() => setIntercityOpen(true)} goHotels={() => setHotelOpen(true)} goOrders={() => setTab('orders')} />)
+    : tab === 'orders' ? (role === 'vendor' ? <OrdersManage role="vendor" /> : role === 'driver' ? <OrdersManage role="driver" /> : <OrdersManage role="customer" />)
     : tab === 'alerts' ? <AlertsTab />
     : <Profile onOpenAddresses={() => setAddrOpen(true)} />;
 
@@ -89,7 +90,7 @@ function Shell() {
       }} />
       <Modal visible={cartOpen} animationType="slide" onRequestClose={() => setCartOpen(false)}>
           <SafeAreaView style={{ flex: 1, paddingTop: sbH }}>
-            <CartScreen onClose={() => setCartOpen(false)} onPlace={() => { placeCartOrder(s.auth?.phone, 'wallet'); setCartOpen(false); setTab('orders'); }} />
+            <CartScreen onClose={() => setCartOpen(false)} onPlaced={() => { setCartOpen(false); setTab('orders'); }} />
           </SafeAreaView>
       </Modal>
       <Modal visible={newOpen} animationType="slide" onRequestClose={() => setNewOpen(false)}>
